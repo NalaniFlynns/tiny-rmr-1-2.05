@@ -1,0 +1,12 @@
+[
+   {
+      "directory" : "C:/Users/Nalani/workspace_v12/RMR/Debug",
+      "command"   : "clang++ -D__MSPM0C1104__ -D__USE_SYSCONFIG__ -I\"C:/Users/Nalani/workspace_v12/RMR\" -I\"C:/Users/Nalani/workspace_v12/RMR/Debug\" -I\"C:/ti/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"C:/ti/mspm0_sdk_2_11_00_07/source\" -isystem\"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/include/c++/v1\" -isystem\"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/lib/clang/18/include\" -isystem\"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/include/c\" -I\"C:/Users/Nalani/workspace_v12/RMR/Debug/syscfg\" -xc",
+      "file"      : "C:/Users/Nalani/workspace_v12/RMR/Debug/syscfg/ti_msp_dl_config.c"
+   },
+   {
+      "directory" : "C:/Users/Nalani/workspace_v12/RMR/Debug",
+      "command"   : "clang++ -D__MSPM0C1104__ -D__USE_SYSCONFIG__ -I\"C:/Users/Nalani/workspace_v12/RMR\" -I\"C:/Users/Nalani/workspace_v12/RMR/Debug\" -I\"C:/ti/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"C:/ti/mspm0_sdk_2_11_00_07/source\" -isystem\"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/include/c++/v1\" -isystem\"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/lib/clang/18/include\" -isystem\"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/include/c\" -I\"C:/Users/Nalani/workspace_v12/RMR/Debug/syscfg\" -xc",
+      "file"      : "C:/Users/Nalani/workspace_v12/RMR/empty_mspm0c1104.c"
+   }
+]
