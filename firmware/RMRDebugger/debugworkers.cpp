@@ -1,4 +1,4 @@
-#include "DebugWorkers.h"
+﻿#include "DebugWorkers.h"
 #include <QDebug>
 #include <QFile>
 #include <QMutexLocker>
@@ -46,12 +46,11 @@ void BaseWorker::processCommandGeneric(const Command& cmd) {
         else if (cmd.type == CmdType::WRITE_16) write16(cmd.arg1, cmd.arg2);
         else if (cmd.type == CmdType::WRITE_32) write32(cmd.arg1, cmd.arg2);
         else if (cmd.type == CmdType::READ_CFG) {
-            uint8_t data[40] = {0};
-            // 从 cfg_params 读取 40 个字节，覆盖所有参数
-            readBlock(OFS_CFG_PARAMS, 40, data);
+            uint8_t data[44] = {0};
+            readBlock(OFS_CFG_PARAMS, 44, data);
             QVariantMap cfg;
-            cfg["def_lvl"] = *(uint32_t*)(data + 0) & 0xFF; // cfg_params lowest byte
-            cfg["feat"] = *(uint32_t*)(data + 4);           // OFS_CFG_FEATURES
+            cfg["def_lvl"] = *(uint32_t*)(data + 0) & 0xFF;
+            cfg["feat"] = *(uint32_t*)(data + 4);
             cfg["r_base"] = *(uint32_t*)(data + 8);
             cfg["r_series"] = *(uint32_t*)(data + 12);
             cfg["v_fw"] = *(uint32_t*)(data + 16);
@@ -60,6 +59,9 @@ void BaseWorker::processCommandGeneric(const Command& cmd) {
             cfg["als_min"] = *(uint32_t*)(data + 28);
             cfg["lvp_crit"] = *(uint32_t*)(data + 32);
             cfg["lvp_ext"] = *(uint32_t*)(data + 36);
+            cfg["als_sqrt"] = data[40];
+            cfg["als_cap_low"] = data[41];
+            cfg["als_cap_high"] = data[42];
             emit sigConfigRead(probeSN, cfg);
         }
         else if (cmd.type == CmdType::SEND_SYS_CMD) {
@@ -74,6 +76,10 @@ void BaseWorker::processCommandGeneric(const Command& cmd) {
                 write32(OFS_CFG_BATT_P_UW, cfg["p_batt"].toUInt());
                 write32(OFS_CFG_ALS_MIN_BRT, cfg["als_min"].toUInt());
                 write32(OFS_CFG_LVP_CRIT, cfg["lvp_crit"].toUInt());
+                write32(OFS_CFG_LVP_EXT, cfg["lvp_ext"].toUInt());
+                write8(OFS_CFG_ALS_SQRT, (uint8_t)(cfg["als_sqrt"].toUInt() & 0xFF));
+                write8(OFS_CFG_ALS_CAP_LOW, (uint8_t)(cfg["als_cap_low"].toUInt() & 0xFF));
+                write8(OFS_CFG_ALS_CAP_HIGH, (uint8_t)(cfg["als_cap_high"].toUInt() & 0xFF));
                 write32(OFS_CFG_LVP_EXT, cfg["lvp_ext"].toUInt());
 
                 uint32_t current_params = read32(OFS_CFG_PARAMS);
@@ -186,42 +192,60 @@ QString BaseWorker::readUuidGeneric() {
     return uuid;
 }
 
-void BaseWorker::pollTelemetryGeneric() {
-    if (read32(OFS_MAGIC) == 0x54455354) {
-        uint8_t data[128] = {0};
-        readBlock(0, 128, data); QVariantMap map;
-        map["vbatt"] = *(uint32_t*)(data + OFS_VBATT_MV);
-        map["dyn_r"] = *(uint32_t*)(data + OFS_DYN_R_MOHM);
-        map["level"] = *(uint16_t*)(data + OFS_CURRENT_LVL);
-        map["brt"] = *(uint16_t*)(data + OFS_CURRENT_BRT);
-        map["v_led"] = *(uint32_t*)(data + OFS_EST_V_LED);
-        map["l_v_drop"] = *(uint32_t*)(data + OFS_LIMIT_V_DROP);
-        map["l_i_brt"] = *(uint32_t*)(data + OFS_LIMIT_I_BRT);
-        map["l_p_avg"] = *(uint32_t*)(data + OFS_LIMIT_P_AVG);
-        map["l_i_led"] = *(uint32_t*)(data + OFS_LIMIT_I_LED);
-        map["p_led"] = *(uint32_t*)(data + OFS_EST_P_LED);
-        map["i_avg"] = *(uint32_t*)(data + OFS_EST_I_AVG);
-        map["i_peak"] = *(uint32_t*)(data + OFS_EST_I_PEAK);
-        map["pwm"] = *(uint16_t*)(data + OFS_CURRENT_PWM);
-        map["sensor"] = data[OFS_SENSOR_STATUS];
-        map["err_cnt"] = data[OFS_ALS_ERR_CNT];
-        map["lux"] = *(uint32_t*)(data + OFS_ALS_FILT);
-        map["lux_raw"] = *(uint32_t*)(data + OFS_ALS_RAW);
-        map["state"] = data[OFS_SYS_STATE];
-        map["safe_brt"] = *(uint16_t*)(data + OFS_SAFE_BRT);
-
-        map["raw_k_m"] = data[OFS_RAW_KEY_MINUS];
-        map["raw_k_p"] = data[OFS_RAW_KEY_PLUS];
-
-        map["f_dim"] = data[OFS_STATE_DIMMED];
-        map["f_ovr"] = data[OFS_STATE_OVERSHOT];
-        map["f_dbg"] = data[OFS_STATE_DEBUG];
-        map["f_dirty"] = data[OFS_NVM_DIRTY];
-
-        emit sigTelemetry(probeSN, map);
-    }
+QString BaseWorker::readFwVersionGeneric() {
+    uint8_t strBuf[16] = {0};
+    readBlock(OFS_FW_VER_STR, 16, strBuf);
+    QString ver = QString::fromUtf8((char*)strBuf).trimmed();
+    if (ver.isEmpty()) { uint16_t v = read16(OFS_VERSION); ver = QString("V%1.%2").arg(v >> 8).arg(v & 0xFF); }
+    return ver;
 }
-
+void BaseWorker::pollTelemetryGeneric() {
+    uint8_t data[0xB0] = {0};
+    readBlock(0, 0xB0, data); QVariantMap map;
+    map["magic"] = *(uint32_t*)(data + OFS_MAGIC);
+    map["cmd"] = *(uint32_t*)(data + OFS_CMD);
+    map["cmd_ack"] = *(uint32_t*)(data + OFS_CMD_ACK);
+    map["status"] = *(uint32_t*)(data + OFS_STATUS);
+    map["vbatt"] = *(uint32_t*)(data + OFS_VBATT_MV);
+    map["dyn_r"] = *(uint32_t*)(data + OFS_DYN_R_MOHM);
+    map["level"] = *(uint16_t*)(data + OFS_CURRENT_LVL);
+    map["brt"] = *(uint16_t*)(data + OFS_CURRENT_BRT);
+    map["safe_brt"] = *(uint16_t*)(data + OFS_SAFE_BRT);
+    map["v_led"] = *(uint32_t*)(data + OFS_EST_V_LED);
+    map["l_v_drop"] = *(uint32_t*)(data + OFS_LIMIT_V_DROP);
+    map["l_i_brt"] = *(uint32_t*)(data + OFS_LIMIT_I_BRT);
+    map["l_p_avg"] = *(uint32_t*)(data + OFS_LIMIT_P_AVG);
+    map["l_i_led"] = *(uint32_t*)(data + OFS_LIMIT_I_LED);
+    map["p_led"] = *(uint32_t*)(data + OFS_EST_P_LED);
+    map["i_avg"] = *(uint32_t*)(data + OFS_EST_I_AVG);
+    map["i_peak"] = *(uint32_t*)(data + OFS_EST_I_PEAK);
+    map["pwm"] = *(uint16_t*)(data + OFS_CURRENT_PWM);
+    map["sensor"] = data[OFS_SENSOR_STATUS];
+    map["err_cnt"] = data[OFS_ALS_ERR_CNT];
+    map["lux"] = *(uint32_t*)(data + OFS_ALS_FILT);
+    map["lux_raw"] = *(uint32_t*)(data + OFS_ALS_RAW);
+    map["state"] = data[OFS_SYS_STATE];
+    map["raw_k_m"] = data[OFS_RAW_KEY_MINUS];
+    map["raw_k_p"] = data[OFS_RAW_KEY_PLUS];
+    map["f_dim"] = data[OFS_STATE_DIMMED];
+    map["f_ovr"] = data[OFS_STATE_OVERSHOT];
+    map["f_dbg"] = data[OFS_STATE_DEBUG];
+    map["f_dirty"] = data[OFS_NVM_DIRTY];
+    map["nvm_fail"] = data[OFS_NVM_SAVE_FAIL_CNT];
+    map["inactivity"] = *(uint32_t*)(data + OFS_INACTIVITY_SEC);
+    map["nvm_seq"] = *(uint32_t*)(data + OFS_NVM_SEQ_ID);
+    map["nvm_sector"] = *(uint32_t*)(data + OFS_NVM_SECTOR);
+    map["nvm_slot"] = *(uint32_t*)(data + OFS_NVM_SLOT);
+    map["ovr_led_mode"] = data[OFS_OVR_LED_MODE];
+    map["ovr_k_m"] = data[OFS_OVR_KEY_MINUS];
+    map["ovr_k_p"] = data[OFS_OVR_KEY_PLUS];
+    map["ovr_als_en"] = data[OFS_OVR_ALS_EN];
+    map["ovr_brt"] = *(uint16_t*)(data + OFS_OVR_BRT_VAL);
+    map["ovr_pwm"] = *(uint16_t*)(data + OFS_OVR_PWM_VAL);
+    map["ovr_lux"] = *(uint32_t*)(data + OFS_OVR_ALS_LUX);
+    map["fw_ver"] = QString::fromUtf8((const char*)(data + OFS_FW_VER_STR)).trimmed();
+    emit sigTelemetry(probeSN, map);
+}
 JLinkWorker::JLinkWorker(uint32_t sn, QObject *parent) : BaseWorker(sn, ProbeType::JLINK, parent) {}
 bool JLinkWorker::initJLink() {
     QString baseDll = "JLink_x64.dll"; QString dllName = QString("JLink_x64_%1.dll").arg(probeSN);
@@ -277,7 +301,7 @@ void JLinkWorker::run() {
         Command cmd; bool hasCmd = false;
         { QMutexLocker lock(&queueMutex); if (!cmdQueue.empty()) { cmd = cmdQueue.front(); cmdQueue.pop(); hasCmd = true; } }
         if (hasCmd) processCommandGeneric(cmd);
-        else if (targetConnected && enablePolling) { pollTelemetryGeneric(); msleep(150); }
+        else if (targetConnected && enablePolling) { pollTelemetryGeneric(); msleep(qMax(20, pollIntervalMs)); }
         else msleep(100);
     }
     jlinkClose();
@@ -299,16 +323,35 @@ void JLinkWorker::executeFlash(const QString& path) {
 }
 void JLinkWorker::triggerReset() { jlinkReset(); jlinkGo(); }
 
-OpenOcdWorker::OpenOcdWorker(uint32_t sn, int port, QObject *parent) : BaseWorker(sn, ProbeType::XDS110, parent), ocdProcess(nullptr), tclSocket(nullptr), tclPort(port) {}
+OpenOcdWorker::OpenOcdWorker(uint32_t sn, int port, bool useXds110Adapter, const QString& openocdPath, const QString& openocdScripts, QObject *parent)
+    : BaseWorker(sn, ProbeType::XDS110, parent), ocdProcess(nullptr), tclSocket(nullptr), tclPort(port) {
+    useXds110 = useXds110Adapter;
+    ocdBinPath = openocdPath;
+    ocdScriptsPath = openocdScripts;
+}
 OpenOcdWorker::~OpenOcdWorker() { stopOpenOCD(); }
 void OpenOcdWorker::startOpenOCD() {
     if (!ocdProcess) ocdProcess = new QProcess();
     if (ocdProcess->state() != QProcess::NotRunning) return;
+    QString bin = ocdBinPath.isEmpty() ? "openocd.exe" : ocdBinPath;
     QStringList args;
-    args << "-c" << "adapter driver cmsis-dap" << "-c" << QString("cmsis_dap_serial %1").arg(probeSN) << "-c" << "transport select swd"
-         << "-c" << QString("adapter speed %1").arg(currentSpeedKHz) << "-f" << "target/ti_mspm0.cfg" << "-c" << QString("tcl_port %1").arg(tclPort)
+    if (!ocdScriptsPath.isEmpty()) args << "-s" << ocdScriptsPath;
+    if (useXds110) {
+        /* TI XDS110: 原生 xds110 适配器驱动 (OpenOCD 0.12+ libusb) */
+        args << "-f" << "interface/xds110.cfg";
+        if (probeSN != 0 && probeSN != 0xFFFFFFFF && probeSN != 0x0451BEF3) args << "-c" << QString("adapter serial %1").arg(probeSN);  // 0x0451BEF3 为 VID+PID 合成SN(XDS110 NOSERIAL), 传了会连接失败
+        args << "-f" << "target/ti_mspm0.cfg";
+        args << "-c" << "transport select swd";
+    } else {
+        /* CMSIS-DAP / DAPLink 探针 */
+        args << "-c" << "adapter driver cmsis-dap";
+        if (probeSN != 0 && probeSN != 0xFFFFFFFF && probeSN != 0x0451BEF3) args << "-c" << QString("cmsis_dap_serial %1").arg(probeSN);
+        args << "-c" << "transport select swd" << "-f" << "target/ti_mspm0.cfg";
+    }
+    args << "-c" << QString("adapter speed %1").arg(currentSpeedKHz)
+         << "-c" << QString("tcl_port %1").arg(tclPort)
          << "-c" << "gdb_port disabled" << "-c" << "telnet_port disabled";
-    ocdProcess->start("openocd.exe", args); ocdProcess->waitForStarted();
+    ocdProcess->start(bin, args); ocdProcess->waitForStarted();
 }
 void OpenOcdWorker::stopOpenOCD() {
     if (tclSocket) { tclSocket->disconnectFromHost(); delete tclSocket; tclSocket = nullptr; }
@@ -334,18 +377,33 @@ bool OpenOcdWorker::checkTargetConnected() {
     return true;
 }
 void OpenOcdWorker::run() {
-    tclSocket = new QTcpSocket(); bool probeConnected = false;
+    tclSocket = new QTcpSocket(); bool probeConnected = false; bool initialized = false; int pollCounter = 0;
     while (running) {
         if (!probeConnected) {
             startOpenOCD(); tclSocket->connectToHost("127.0.0.1", tclPort);
-            if (tclSocket->waitForConnected(1000)) { probeConnected = true; emit sigLog(probeSN, "[SYS] XDS110/DAPLink probe internal service started."); }
-            else { emit sigStatus(probeSN, 0, "Awaiting Probe..."); msleep(1000); continue; }
+            if (tclSocket->waitForConnected(1500)) {
+                probeConnected = true; initialized = false;
+                emit sigLog(probeSN, QString("[SYS] %1 debug service started on TCP:%2.").arg(useXds110 ? "XDS110(OpenOCD)" : "DAPLink(OpenOCD)").arg(tclPort));
+            } else { emit sigStatus(probeSN, 0, "Awaiting Probe..."); msleep(1000); continue; }
         }
-        bool targetConnected = checkTargetConnected();
+        if (!initialized) {
+            QString res = sendTclCommand("init", 3000, true);
+            /* init 的 TCL 返回体为空(Info 日志走 stderr), 用一次内存读确认目标已就绪 */
+            bool initFailed = res.contains("Error", Qt::CaseInsensitive) || res.contains("Failed", Qt::CaseInsensitive);
+            if (!initFailed) {
+                QString probe = sendTclCommand("mdw 0x20000000", 800, true);
+                initFailed = probe.contains("Error", Qt::CaseInsensitive) || probe.contains("Failed", Qt::CaseInsensitive) || probe.isEmpty();
+            }
+            initialized = !initFailed;
+            if (initialized) { sendTclCommand(QString("adapter speed %1").arg(currentSpeedKHz), 500, true); emit sigLog(probeSN, "[SYS] OpenOCD target initialized (SWD)."); }
+            else { emit sigStatus(probeSN, 0, "Target Unresponsive"); msleep(500); }
+        }
+        bool targetConnected = initialized;
         if (targetConnected) {
             if (!wasConnected) {
                 wasConnected = true; emit sigStatus(probeSN, 1, "Target Connected"); emit sigUuid(probeSN, readUuidGeneric());
-                emit sigLog(probeSN, "[SYS] Target MCU connected successfully via DAPLink.");
+                emit sigFwVer(probeSN, readFwVersionGeneric());
+                emit sigLog(probeSN, "[SYS] Target MCU connected via SWD.");
                 if (autoFlashEnabled && !fwPath.isEmpty() && !targetFlashedThisSession) { targetFlashedThisSession = true; enqueueCommand(Command(CmdType::FLASH, 0, 0, fwPath)); }
             }
             pumpOpenOCDLogs(false);
@@ -356,7 +414,14 @@ void OpenOcdWorker::run() {
         if (targetConnected && speedNeedsUpdate) { sendTclCommand(QString("adapter speed %1").arg(currentSpeedKHz), 500, false); speedNeedsUpdate = false; }
         Command cmd; bool hasCmd = false;
         { QMutexLocker lock(&queueMutex); if (!cmdQueue.empty()) { cmd = cmdQueue.front(); cmdQueue.pop(); hasCmd = true; } }
-        if (hasCmd) processCommandGeneric(cmd); else if (targetConnected && enablePolling) { pollTelemetryGeneric(); msleep(150); } else msleep(100);
+        if (hasCmd) { processCommandGeneric(cmd); pollCounter = 0; }
+        else if (targetConnected && enablePolling) { pollTelemetryGeneric(); msleep(qMax(20, pollIntervalMs)); }
+        else msleep(100);
+        /* 周期性确认连接(每 ~5s 一次, 避免每次轮询多一次往返) */
+        if (wasConnected && (++pollCounter >= 50) && enablePolling) {
+            pollCounter = 0;
+            if (!checkTargetConnected()) { wasConnected = false; targetFlashedThisSession = false; initialized = false; emit sigStatus(probeSN, 0, "Target Lost..."); emit sigUuid(probeSN, "-"); emit sigFwVer(probeSN, "N/A"); }
+        }
     }
     stopOpenOCD();
 }
@@ -395,10 +460,20 @@ void OpenOcdWorker::readBlock(uint32_t ofs, uint32_t byteCount, uint8_t* outData
 }
 void OpenOcdWorker::executeFlash(const QString& path) {
     QString safePath = path; safePath.replace("\\", "/");
-    sendTclCommand("reset halt", 1000, false);
-    QString res = sendTclCommand(QString("program %1 verify reset").arg(safePath), 15000, false);
-    if (res.contains("Failed", Qt::CaseInsensitive) || res.contains("Error", Qt::CaseInsensitive) || res.contains("No target", Qt::CaseInsensitive)) {
-        throw std::runtime_error("OpenOCD Native Error: Programming failed. Target missing or protected.");
+    emit sigLog(probeSN, QString("[OPENOCD] Programming %1 ...").arg(safePath));
+    QString res = sendTclCommand(QString("program %1 verify reset").arg(safePath), 30000, false);
+    if (res.contains("Failed", Qt::CaseInsensitive) || res.contains("No target", Qt::CaseInsensitive)) {
+        throw std::runtime_error("OpenOCD Error: Programming failed. Target missing or protected.");
     }
+    if (!res.contains("Verified", Qt::CaseInsensitive)) {
+        emit sigLog(probeSN, "[OPENOCD] Verify status unclear, checking flash bank...");
+        sendTclCommand("reset halt", 2000, true);
+        QString chk = sendTclCommand("flash verify_image " + safePath, 15000, false);
+        sendTclCommand("reset run", 1000, true);
+        if (chk.contains("error", Qt::CaseInsensitive) || chk.contains("failed", Qt::CaseInsensitive)) {
+            throw std::runtime_error("OpenOCD Error: Verify failed after programming.");
+        }
+    }
+    emit sigLog(probeSN, "[OPENOCD] Programming + Verify OK, target restarted.");
 }
 void OpenOcdWorker::triggerReset() { sendTclCommand("reset run"); }

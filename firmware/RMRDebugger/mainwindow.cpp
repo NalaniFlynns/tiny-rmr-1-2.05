@@ -1,5 +1,5 @@
-#include "MainWindow.h"
-#include "DebugWorkers.h"
+﻿#include "MainWindow.h"
+    int prmMax[] = {9999, 999999, 5000, 100000, 99999999, 1000, 5000, 5000, 8, 20, 20, 20};
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -11,6 +11,8 @@
 #include <QTextStream>
 #include <QRegularExpression>
 #include <QFrame>
+#include <QScrollArea>
+#include <QFrame>
 #include <QGraphicsLayout>
 #include <QLegendMarker>
 #include <QSplitter>
@@ -19,6 +21,11 @@
 #include <QIcon>
 #include <QSet>
 #include <QSerialPortInfo>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
 
 #pragma pack(push, 8)
 struct JLINKARM_EMU_CONNECT_INFO {
@@ -54,11 +61,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     g_mainWindowContext = this;
     setWindowTitle("RMR Factory Programmer");
     setWindowIcon(QIcon(":/logo.ico"));
-    setMinimumSize(950, 600);
+    setMinimumSize(1180, 780);
     resize(1450, 950);
 
     initDatabase();
     setupUI();
+    applyTheme();
+    setupIpc();
 
     autoScanTimer = new QTimer(this);
     connect(autoScanTimer, &QTimer::timeout, this, [this](){ scanProbes(false); });
@@ -81,16 +90,11 @@ MainWindow::~MainWindow() {
 
 void MainWindow::resizeEvent(QResizeEvent *event) {
     QMainWindow::resizeEvent(event);
-    double scaleW = this->width() / 1450.0;
-    double scaleH = this->height() / 950.0;
-    double scale = std::min(scaleW, scaleH);
-    scale = std::max(0.55, std::min(scale, 1.8));
+    /* 固定字号与内边距：不再随窗口缩放，避免元素被压缩 (设计基准 1450x950) */
+}
 
-    int pt_sm = std::max(7, (int)(8 * scale));
-    int pt_md = std::max(8, (int)(9 * scale));
-    int pt_lg = std::max(9, (int)(10 * scale));
-    int pad_btn = std::max(4, (int)(6 * scale));
-
+void MainWindow::applyTheme() {
+    /* 固定字号/内边距 (设计基准 1450x950), 不随窗口缩放 */
     QString qss = QString(
                       "QWidget { font-family: 'Segoe UI', Arial; font-size: %1pt; color: #333333; } "
                       "QMainWindow { background-color: #F4F6F9; } "
@@ -118,8 +122,231 @@ void MainWindow::resizeEvent(QResizeEvent *event) {
                       "QHeaderView::section { background-color: #F1F3F5; padding: 4px; border: 1px solid #DEE2E6; font-weight: bold; color: #495057; } "
                       "QSplitter::handle:vertical { background-color: #DEE2E6; border: 1px solid #CCCCCC; border-radius: 2px; margin: 2px 0px; height: 6px; } "
                       "QSplitter::handle:vertical:hover { background-color: #0078D7; } "
-                      ).arg(pt_md).arg(pt_lg).arg(pad_btn);
+                      "QScrollArea { background-color: #F4F6F9; border: none; } "
+                      "QScrollBar:vertical { background: #F1F3F5; width: 12px; margin: 0; } "
+                      "QScrollBar::handle:vertical { background: #C5CED6; border-radius: 6px; min-height: 30px; margin: 2px; } "
+                      "QScrollBar::handle:vertical:hover { background: #9FB2C8; } "
+                      "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; } "
+                      "QScrollBar:horizontal { background: #F1F3F5; height: 12px; margin: 0; } "
+                      "QScrollBar::handle:horizontal { background: #C5CED6; border-radius: 6px; min-width: 30px; margin: 2px; } "
+                      "QScrollBar::handle:horizontal:hover { background: #9FB2C8; } "
+                      "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; } "
+                      ).arg(8).arg(9).arg(6);
     this->setStyleSheet(qss);
+}
+
+void MainWindow::setFwPath(const QString& path) {
+    txtFwPath->setText(path);
+    QString foundVer = parseHexVersion(path);
+    txtHexVer->setText(foundVer.isEmpty() ? "Not Found" : foundVer);
+    for (auto w : activeWorkers) w->fwPath = path;
+}
+
+void MainWindow::setupIpc() {
+    /* 本地隐藏调试接口: 127.0.0.1:7345, JSON 行协议 (供自动化测试/外部读取实时数据) */
+    ipcServer = new QTcpServer(this);
+    if (!ipcServer->listen(QHostAddress::LocalHost, 7345)) {
+        onLog(0, QString("[SYS] IPC 接口启动失败: %1").arg(ipcServer->errorString()));
+        return;
+    }
+    onLog(0, "[SYS] IPC 接口已启动: 127.0.0.1:7345 (JSON)");
+    connect(ipcServer, &QTcpServer::newConnection, this, [this](){
+        while (QTcpSocket *s = ipcServer->nextPendingConnection()) {
+            ipcClients.append(s);
+            ipcBuffers.insert(s, QByteArray());
+            connect(s, &QTcpSocket::readyRead, this, [this, s](){ handleIpcRead(s); });
+            connect(s, &QTcpSocket::disconnected, this, [this, s](){
+                ipcClients.removeAll(s); ipcBuffers.remove(s); s->deleteLater();
+            });
+            ipcSendHello(s);
+        }
+    });
+}
+
+void MainWindow::ipcSend(QTcpSocket *s, const QJsonObject& obj) {
+    if (!s) return;
+    QByteArray line = QJsonDocument(obj).toJson(QJsonDocument::Compact) + '\n';
+    s->write(line);
+    s->flush();
+}
+
+void MainWindow::ipcBroadcast(const QJsonObject& obj) {
+    if (ipcClients.isEmpty()) return;
+    QByteArray line = QJsonDocument(obj).toJson(QJsonDocument::Compact) + '\n';
+    for (QTcpSocket *s : ipcClients) { s->write(line); s->flush(); }
+}
+
+void MainWindow::ipcSendHello(QTcpSocket *s) {
+    QJsonObject hello;
+    hello["type"] = "hello";
+    hello["app"] = "RMRDebugger";
+    hello["ts"] = QString::number(QDateTime::currentMSecsSinceEpoch());
+    hello["fw_path"] = txtFwPath ? txtFwPath->text() : QString();
+    hello["active_probe"] = QString::number(cmbActiveProbe ? cmbActiveProbe->currentData().toUInt() : 0);
+    hello["poll_enabled"] = chkPoll && chkPoll->isChecked();
+    hello["poll_interval_ms"] = spinPollMs ? spinPollMs->value() : 150;
+    QJsonArray probes;
+    for (auto it = activeWorkers.constBegin(); it != activeWorkers.constEnd(); ++it) {
+        QJsonObject p;
+        p["sn"] = QString::number(it.key());
+        p["type"] = it.value()->probeType == ProbeType::XDS110 ? "XDS110" : "JLINK";
+        p["connected"] = lastStatusCode.value(it.key(), 0) == 1;
+        p["status"] = lastStatusMsg.value(it.key(), QString());
+        p["uuid"] = lastUuid.value(it.key(), QString());
+        p["fw"] = lastFwVer.value(it.key(), QString());
+        if (lastTelemetry.contains(it.key()))
+            p["telemetry"] = QJsonObject::fromVariantMap(lastTelemetry[it.key()]);
+        probes.append(p);
+    }
+    hello["probes"] = probes;
+    ipcSend(s, hello);
+}
+
+void MainWindow::handleIpcRead(QTcpSocket *s) {
+    ipcBuffers[s] += s->readAll();
+    while (true) {
+        int nl = ipcBuffers[s].indexOf('\n');
+        if (nl < 0) break;
+        QByteArray line = ipcBuffers[s].left(nl).trimmed();
+        ipcBuffers[s].remove(0, nl + 1);
+        if (line.isEmpty()) continue;
+        QJsonParseError err;
+        QJsonDocument doc = QJsonDocument::fromJson(line, &err);
+        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+            QJsonObject r; r["type"]="error"; r["msg"]="bad json"; ipcSend(s, r);
+            continue;
+        }
+        handleIpcCommand(s, doc.object());
+    }
+}
+
+void MainWindow::handleIpcCommand(QTcpSocket *s, const QJsonObject& cmd) {
+    QString c = cmd["cmd"].toString();
+    auto reply = [&](bool ok, const QString& msg = QString()){
+        QJsonObject r; r["type"]="reply"; r["cmd"]=c; r["ok"]=ok; r["msg"]=msg; ipcSend(s, r);
+    };
+    auto toU32 = [](const QJsonValue& v, uint32_t def) -> uint32_t {
+        if (v.isString()) return v.toString().toUInt(nullptr, 0);
+        if (v.isDouble()) return (uint32_t)v.toInt();
+        return def;
+    };
+
+    if (c == "ping") { reply(true, "pong"); return; }
+    if (c == "state") { ipcSendHello(s); return; }
+    if (c == "scan") { reply(true, "scanning"); scanProbes(true); return; }
+    if (c == "setfw") {
+        QString path = cmd["path"].toString();
+        if (path.isEmpty()) { reply(false, "path required"); return; }
+        setFwPath(path);
+        reply(true, "fw set: " + path);
+        return;
+    }
+    if (c == "flash") {
+        if (cmd.contains("path")) setFwPath(cmd["path"].toString());
+        if (txtFwPath->text().isEmpty()) { reply(false, "no fw path"); return; }
+        reply(true, "flash started");
+        triggerFlashAll();
+        return;
+    }
+    if (c == "unlock") {
+        reply(true, "unlock queued");
+        enqueueToActive(Command(CmdType::ENTER_TEST));
+        enqueueToActive(Command(CmdType::READ_CFG));
+        return;
+    }
+    if (c == "syscmd") {
+        uint32_t n = toU32(cmd["n"], 0);
+        reply(true, "syscmd queued");
+        enqueueToActive(Command(CmdType::SEND_SYS_CMD, n));
+        return;
+    }
+    if (c == "write") {
+        uint32_t ofs = toU32(cmd["ofs"], 0);
+        uint32_t val = toU32(cmd["val"], 0);
+        int size = cmd["size"].toInt(4);
+        if (size == 8) enqueueToActive(Command(CmdType::WRITE_8, ofs, val));
+        else if (size == 16) enqueueToActive(Command(CmdType::WRITE_16, ofs, val));
+        else enqueueToActive(Command(CmdType::WRITE_32, ofs, val));
+        reply(true, "write queued");
+        return;
+    }
+    if (c == "read") {
+        uint32_t ofs = toU32(cmd["ofs"], 0);
+        int size = cmd["size"].toInt(4);
+        QVariantMap m; m["size"] = size;
+        enqueueToActive(Command(CmdType::READ_MEM_ABS, BASE_ADDR + ofs, 0, "", m));
+        reply(true, "read queued");
+        return;
+    }
+    if (c == "poll") {
+        if (cmd.contains("enabled")) chkPoll->setChecked(cmd["enabled"].toVariant().toBool());
+        if (cmd.contains("intervalMs")) spinPollMs->setValue(cmd["intervalMs"].toInt());
+        onActiveProbeChanged();
+        reply(true, "poll updated");
+        return;
+    }
+    if (c == "speed") {
+        int khz = cmd["khz"].toInt();
+        int idx = cmbSpeed->findText(QString("%1 kHz").arg(khz));
+        if (idx >= 0) cmbSpeed->setCurrentIndex(idx);
+        else { cmbSpeed->addItem(QString("%1 kHz").arg(khz)); cmbSpeed->setCurrentIndex(cmbSpeed->count() - 1); }
+        reply(true, "speed set");
+        return;
+    }
+    if (c == "key") {
+        int holdMs = cmd["holdMs"].toInt(spinKeyHoldMs->value());
+        bool plus = cmd["key"].toString() == "plus";
+        if (cmd.contains("tap")) plus = cmd["tap"].toInt() > 0;
+        uint32_t ofs = plus ? OFS_OVR_KEY_PLUS : OFS_OVR_KEY_MINUS;
+        enqueueToActive(Command(CmdType::WRITE_8, ofs, 1));
+        QTimer::singleShot(holdMs, this, [this, ofs](){ enqueueToActive(Command(CmdType::WRITE_8, ofs, 0)); });
+        reply(true, "key queued");
+        return;
+    }
+    if (c == "power") {
+        QString st = cmd["state"].toString();
+        enqueueToActive(Command(CmdType::SEND_SYS_CMD, st == "on" ? 6 : 7));
+        reply(true, "power " + st);
+        return;
+    }
+    if (c == "led") {
+        int mode = cmd["mode"].toInt();
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_LED_MODE, (uint32_t)mode));
+        if (cmd.contains("value")) {
+            if (mode == 1) enqueueToActive(Command(CmdType::WRITE_16, OFS_OVR_PWM_VAL, (uint32_t)cmd["value"].toInt()));
+            else enqueueToActive(Command(CmdType::WRITE_16, OFS_OVR_BRT_VAL, (uint32_t)cmd["value"].toInt()));
+        }
+        reply(true, "led queued");
+        return;
+    }
+    if (c == "als") {
+        if (cmd.contains("enabled")) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_ALS_EN, cmd["enabled"].toVariant().toBool() ? 1 : 0));
+        if (cmd.contains("lux")) enqueueToActive(Command(CmdType::WRITE_32, OFS_OVR_ALS_LUX, (uint32_t)cmd["lux"].toInt()));
+        reply(true, "als queued");
+        return;
+    }
+    if (c == "cmd") {
+        QString t = cmd["type"].toString();
+        CmdType ct;
+        if (t == "FLASH") ct = CmdType::FLASH;
+        else if (t == "ENTER_TEST") ct = CmdType::ENTER_TEST;
+        else if (t == "WRITE_8") ct = CmdType::WRITE_8;
+        else if (t == "WRITE_16") ct = CmdType::WRITE_16;
+        else if (t == "WRITE_32") ct = CmdType::WRITE_32;
+        else if (t == "READ_CFG") ct = CmdType::READ_CFG;
+        else if (t == "SEND_SYS_CMD") ct = CmdType::SEND_SYS_CMD;
+        else if (t == "AUTO_CALIBRATE") ct = CmdType::AUTO_CALIBRATE;
+        else if (t == "AUTO_TEST") ct = CmdType::AUTO_TEST;
+        else { reply(false, "unknown type: " + t); return; }
+        uint32_t a1 = toU32(cmd["arg1"], 0);
+        uint32_t a2 = toU32(cmd["arg2"], 0);
+        QString str = cmd["str"].toString();
+        QVariantMap m = cmd["map"].toObject().toVariantMap();
+        enqueueToActive(Command(ct, a1, a2, str, m));
+        reply(true, "cmd queued");
+        return;
+    }
+    reply(false, "unknown cmd: " + c);
 }
 
 void MainWindow::setupUI() {
@@ -133,7 +360,7 @@ void MainWindow::setupUI() {
     QHBoxLayout *hl = new QHBoxLayout(headerFrame);
     hl->setContentsMargins(5, 5, 5, 5);
 
-    lblIndicator = new QLabel("●");
+    lblIndicator = new QLabel("*");
     lblIndicator->setStyleSheet("color: #DC3545; font-size: 16pt; border: none;");
     lblStatus = new QLabel("Disconnected");
     lblStatus->setStyleSheet("color: #DC3545; font-weight: bold; border: none;");
@@ -216,7 +443,7 @@ void MainWindow::setupUI() {
 
     hScan->addStretch();
 
-    btnFlashAll = new QPushButton("▶ Flash ALL Connected");
+    btnFlashAll = new QPushButton("Flash ALL Connected");
     btnFlashAll->setObjectName("BtnGreen");
     connect(btnFlashAll, &QPushButton::clicked, this, &MainWindow::triggerFlashAll);
     hScan->addWidget(btnFlashAll);
@@ -242,7 +469,7 @@ void MainWindow::setupUI() {
     QVBoxLayout *vTestMain = new QVBoxLayout(tabTest);
     QHBoxLayout *hCols = new QHBoxLayout();
 
-    // =============== 列 1: 基础命令和设置 ===============
+    // =============== 鍒?1: 鍩虹鍛戒护鍜岃缃?===============
     QVBoxLayout *col1 = new QVBoxLayout();
     QPushButton *btnEnter = new QPushButton("1. Unlock Test Mode (Active Probe)");
     btnEnter->setObjectName("BtnGreen");
@@ -270,9 +497,9 @@ void MainWindow::setupUI() {
 
     QGroupBox *grpAdv = new QGroupBox("Advanced Parameters");
     QGridLayout *gridAdv = new QGridLayout(grpAdv);
-    QStringList prmTexts = {"R_Base(mΩ):", "Series(mΩ):", "LED Vf(mV):", "Max I(uA):", "Max P(uW):", "ALS Min:", "LVP Crit:", "LVP Ext:", "Def Lvl:"};
-    QStringList prmKeys = {"r_base", "r_series", "v_fw", "i_max", "p_batt", "als_min", "lvp_crit", "lvp_ext", "def_lvl"};
-    int prmMax[] = {9999, 999999, 5000, 100000, 99999999, 1000, 5000, 5000, 8};
+    QStringList prmTexts = {"R_Base(mOhm):", "Series(mOhm):", "LED Vf(mV):", "Max I(uA):", "Max P(uW):", "ALS Min:", "LVP Crit:", "LVP Ext:", "Def Lvl:", "ALS Sqrt:", "ALS Cap Lo:", "ALS Cap Hi:"};
+    QStringList prmKeys = {"r_base", "r_series", "v_fw", "i_max", "p_batt", "als_min", "lvp_crit", "lvp_ext", "def_lvl", "als_sqrt", "als_cap_low", "als_cap_high"};
+    int prmMax[] = {9999, 999999, 5000, 100000, 99999999, 1000, 5000, 5000, 8, 20, 20, 20};
     for (int i = 0; i < prmKeys.size(); ++i) {
         QLabel *l = new QLabel(prmTexts[i]);
         l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -337,18 +564,30 @@ void MainWindow::setupUI() {
     col1->addWidget(grpDma);
     col1->addStretch();
 
-    // =============== 列 2: 数据监控 ===============
+    // =============== 鍒?2: 鏁版嵁鐩戞帶 ===============
     QVBoxLayout *col2 = new QVBoxLayout();
     QGroupBox *grpMon = new QGroupBox("Real-time Telemetry Monitor");
     QVBoxLayout *vMon = new QVBoxLayout(grpMon);
     chkPoll = new QCheckBox("Enable Background Polling");
     chkPoll->setStyleSheet("color: #0078D7; font-weight: bold;");
     connect(chkPoll, &QCheckBox::toggled, this, &MainWindow::onActiveProbeChanged);
+    QHBoxLayout *lPoll = new QHBoxLayout();
+    lPoll->addWidget(chkPoll);
+    lPoll->addStretch();
+    lPoll->addWidget(new QLabel("Poll(ms):"));
+    spinPollMs = new QSpinBox();
+    spinPollMs->setRange(20, 5000);
+    spinPollMs->setValue(150);
+    spinPollMs->setSuffix(" ms");
+    spinPollMs->setToolTip("遥测轮询间隔。J-Link/OpenOCD(XDS110) 持续会话可达 20ms(50Hz)。");
+    connect(spinPollMs, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v){ for (auto w : activeWorkers) w->pollIntervalMs = v; });
+    lPoll->addWidget(spinPollMs);
+    vMon->addLayout(lPoll);
     vMon->addWidget(chkPoll);
 
     QGridLayout *gridMon = new QGridLayout();
-    QStringList monTexts = {"State:", "VBATT(mV):", "Est R(mΩ):", "Level(0-8):", "Brt Target:", "V_LED(mV):", "V-Limit:", "I-Lim(Brt):", "P-Limit(W):", "I-Lim(LED):", "Est.P(mW):", "Est I(mA):", "Peak I(mA):", "HW PWM:", "I2C Sensor:", "I2C Err:", "Lux(Filt):", "Lux(RAW):", "Btn[-] Pin:", "Btn[+] Pin:", "Run Flags:"};
-    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "raw_k_m", "raw_k_p", "flags"};
+    QStringList monTexts = {"State:", "VBATT(mV):", "Est R(m\u03a9):", "Level:", "Brt Target:", "Duty Cycle:", "V_LED(mV):", "V-Limit:", "I-Lim(Brt):", "P-Limit(W):", "I-Lim(LED):", "Est.P(mW):", "Avg I(mA):", "Peak I(mA):", "HW PWM:", "I2C Sensor:", "I2C Err:", "Lux(Filt):", "Lux(RAW):", "Btn[-]:", "Btn[+]:", "NVM:", "Save Fail:", "Inactive:", "NVM Seq:", "NVM Sector:", "NVM Slot:", "Ovr Mode:", "Cmd Ack:", "FW Ver:", "Run Flags:"};
+    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "raw_k_m", "raw_k_p", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags"};
     for (int i = 0; i < monKeys.size(); ++i) {
         QLabel *l = new QLabel(monTexts[i]);
         l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -363,12 +602,13 @@ void MainWindow::setupUI() {
     vMon->addStretch();
     col2->addWidget(grpMon, 1);
 
-    // =============== 列 3: 接管覆盖及测试 ===============
+    // =============== 鍒?3: 鎺ョ瑕嗙洊鍙婃祴璇?===============
     QVBoxLayout *col3 = new QVBoxLayout();
     QGroupBox *grpOvr = new QGroupBox("Hardware Overrides");
     QVBoxLayout *vOvr = new QVBoxLayout(grpOvr);
 
-    chkBlockPhysKeys = new QCheckBox("Block Hardware Interferences (Ignore physical buttons)");
+    chkBlockPhysKeys = new QCheckBox("Block Physical Buttons");
+    chkBlockPhysKeys->setToolTip("Block Hardware Interferences (Ignore physical buttons)");
     chkBlockPhysKeys->setStyleSheet("color: #D35400; font-weight: bold;");
     connect(chkBlockPhysKeys, &QCheckBox::toggled, this, [this](bool checked) {
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, checked ? 1 : 0));
@@ -383,8 +623,27 @@ void MainWindow::setupUI() {
     QPushButton *btnMinus = new QPushButton("[-]");
     connect(btnMinus, &QPushButton::pressed, [this](){ enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1)); });
     connect(btnMinus, &QPushButton::released, [this](){ enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0)); });
-    lKey->addWidget(btnPlus); lKey->addWidget(btnMinus);
-    vOvr->addLayout(lKey);
+    lKey->addWidget(new QLabel("Hold:"));
+    spinKeyHoldMs = new QSpinBox();
+    spinKeyHoldMs->setRange(100, 5000);
+    spinKeyHoldMs->setValue(600);
+    spinKeyHoldMs->setSuffix(" ms");
+    spinKeyHoldMs->setToolTip("短按持续时间(需 > 消抖20ms 且 < 1500ms 才识别为短按)。");
+    lKey->addWidget(spinKeyHoldMs);
+    QPushButton *btnTapPlus = new QPushButton("Tap [+]");
+    connect(btnTapPlus, &QPushButton::clicked, this, [this](){ int hold = spinKeyHoldMs->value(); enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1)); QTimer::singleShot(hold, this, [this](){ enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0)); }); });
+    QPushButton *btnTapMinus = new QPushButton("Tap [-]");
+    connect(btnTapMinus, &QPushButton::clicked, this, [this](){ int hold = spinKeyHoldMs->value(); enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1)); QTimer::singleShot(hold, this, [this](){ enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0)); }); });
+    lKey->addWidget(btnTapPlus); lKey->addWidget(btnTapMinus);
+    QHBoxLayout *lPwr = new QHBoxLayout();
+    QPushButton *btnPwrOn = new QPushButton("Power ON");
+    btnPwrOn->setObjectName("BtnGreen");
+    connect(btnPwrOn, &QPushButton::clicked, this, [this](){ enqueueToActive(Command(CmdType::SEND_SYS_CMD, 6)); });
+    QPushButton *btnPwrOff = new QPushButton("Power OFF");
+    btnPwrOff->setObjectName("BtnRed");
+    connect(btnPwrOff, &QPushButton::clicked, this, [this](){ enqueueToActive(Command(CmdType::SEND_SYS_CMD, 7)); });
+    lPwr->addWidget(btnPwrOn); lPwr->addWidget(btnPwrOff);
+    vOvr->addLayout(lPwr);
 
     QHBoxLayout *lAls = new QHBoxLayout();
     chkOvrAls = new QCheckBox("Fake Lux:");
@@ -417,7 +676,7 @@ void MainWindow::setupUI() {
 
     QGroupBox *grpAt = new QGroupBox("Factory Auto-Test Script");
     QVBoxLayout *vAt = new QVBoxLayout(grpAt);
-    QPushButton *btnAt = new QPushButton("▶ START AUTO-TEST");
+    QPushButton *btnAt = new QPushButton("START AUTO-TEST");
     btnAt->setObjectName("BtnPurple");
     connect(btnAt, &QPushButton::clicked, [this](){ enqueueToActive(Command(CmdType::AUTO_TEST)); });
     vAt->addWidget(btnAt);
@@ -428,12 +687,32 @@ void MainWindow::setupUI() {
     col3->addWidget(grpAt);
     col3->addStretch();
 
-    hCols->addLayout(col1, 1);
-    hCols->addLayout(col2, 1);
-    hCols->addLayout(col3, 1);
+    QWidget *wCol1 = new QWidget(); wCol1->setLayout(col1);
+    QScrollArea *saCol1 = new QScrollArea(); saCol1->setWidget(wCol1); saCol1->setWidgetResizable(true); saCol1->setFrameShape(QFrame::NoFrame); saCol1->setMinimumWidth(280);
+    QWidget *wCol2 = new QWidget(); wCol2->setLayout(col2);
+    QScrollArea *saCol2 = new QScrollArea(); saCol2->setWidget(wCol2); saCol2->setWidgetResizable(true); saCol2->setFrameShape(QFrame::NoFrame); saCol2->setMinimumWidth(300);
+    QWidget *wCol3 = new QWidget(); wCol3->setLayout(col3);
+    QScrollArea *saCol3 = new QScrollArea(); saCol3->setWidget(wCol3); saCol3->setWidgetResizable(true); saCol3->setFrameShape(QFrame::NoFrame); saCol3->setMinimumWidth(300);
+    /* 深色模式下 QScrollArea viewport/滚动条默认用深色 Base，会导致三列内容四周出现黑边；统一强制浅色 */
+    const QColor colBg("#F4F6F9");
+    for (QScrollArea *sa : {saCol1, saCol2, saCol3}) {
+        QPalette vpPal = sa->viewport()->palette();
+        vpPal.setColor(QPalette::Base, colBg);
+        sa->viewport()->setPalette(vpPal);
+        sa->viewport()->setAutoFillBackground(true);
+    }
+    for (QWidget *wc : {wCol1, wCol2, wCol3}) {
+        wc->setAutoFillBackground(true);
+        QPalette wcPal = wc->palette();
+        wcPal.setColor(QPalette::Window, colBg);
+        wc->setPalette(wcPal);
+    }
+    hCols->addWidget(saCol1, 1);
+    hCols->addWidget(saCol2, 1);
+    hCols->addWidget(saCol3, 1);
     vTestMain->addLayout(hCols, 1);
 
-    // =============== 曲线图 ===============
+    // =============== 鏇茬嚎鍥?===============
     chart = new QChart();
     chart->legend()->show();
     chart->legend()->setAlignment(Qt::AlignTop);
@@ -471,7 +750,7 @@ void MainWindow::setupUI() {
     tabs->addTab(tabTest, "2. Test & Calibration Mode");
     mainSplitter->addWidget(tabs);
 
-    // =============== 终端日志控制台 ===============
+    // =============== 缁堢鏃ュ織鎺у埗鍙?===============
     consoleContainer = new QWidget();
     consoleContainer->setMinimumHeight(80);
     vConsoleLayout = new QVBoxLayout(consoleContainer);
@@ -486,7 +765,7 @@ void MainWindow::setupUI() {
     QLabel *lblConsoleTitle = new QLabel("Global Output Console");
     lblConsoleTitle->setStyleSheet("color: #004085; font-weight: bold; font-size: 10pt; border: none;");
 
-    btnDetachConsole = new QPushButton("⧉ Detach");
+    btnDetachConsole = new QPushButton("Detach");
     btnDetachConsole->setStyleSheet("background-color: #E9ECEF; color: #495057; border: 1px solid #B0C4DE; padding: 2px 8px; border-radius: 3px; font-weight: bold;");
     btnDetachConsole->setCursor(Qt::PointingHandCursor);
     connect(btnDetachConsole, &QPushButton::clicked, this, &MainWindow::toggleConsoleWindow);
@@ -584,22 +863,30 @@ void MainWindow::scanProbes(bool isManual) {
         }
     }
 
+    QSet<uint32_t> seenXds;
     for (const QSerialPortInfo &info : QSerialPortInfo::availablePorts()) {
         QString desc = info.description().toUpper();
-        if (desc.contains("XDS110") || desc.contains("CMSIS-DAP")) {
-            uint32_t sn = info.serialNumber().toUInt();
-            if (sn == 0) sn = qHash(info.serialNumber());
-
-            if (sn != 0) {
-                currentScanned.insert(sn);
-                if (!activeWorkers.contains(sn)) {
-                    addProbeToUI(sn, ProbeType::XDS110);
-                    newlyAdded++;
-                }
-            }
+        bool isXds = desc.contains("XDS110");
+        bool isDap = desc.contains("CMSIS-DAP");
+        if (!isXds && !isDap) continue;
+        uint32_t sn = 0;
+        if (isXds) {
+            /* XDS110 同时枚举 COM4(背通道UART) 与 COM5(Aux), 同一探针只建立一个 SWD 通道 */
+            if (info.vendorIdentifier() == 0x0451 && info.productIdentifier() == 0xBEF3) sn = 0x0451BEF3u;
+            else if (!info.serialNumber().isEmpty()) sn = qHash(info.serialNumber());
+            if (sn == 0 || seenXds.contains(sn)) continue;
+            seenXds.insert(sn);
+        } else {
+            sn = info.serialNumber().toUInt();
+            if (sn == 0) sn = qHash(info.systemLocation() + info.description());
+            if (sn == 0) continue;
+        }
+        currentScanned.insert(sn);
+        if (!activeWorkers.contains(sn)) {
+            addProbeToUI(sn, ProbeType::XDS110, isXds);
+            newlyAdded++;
         }
     }
-
     QList<uint32_t> toRemove;
     for (uint32_t activeSn : activeWorkers.keys()) {
         if (!currentScanned.contains(activeSn)) {
@@ -621,6 +908,8 @@ void MainWindow::scanProbes(bool isManual) {
 
 void MainWindow::removeProbeFromUI(uint32_t sn) {
     if (!activeWorkers.contains(sn)) return;
+    lastTelemetry.remove(sn); lastUuid.remove(sn); lastFwVer.remove(sn); lastStatusCode.remove(sn); lastStatusMsg.remove(sn);
+    QJsonObject r2; r2["type"]="probe_removed"; r2["sn"]=QString::number(sn); ipcBroadcast(r2);
 
     BaseWorker *w = activeWorkers[sn];
     w->disconnect(this);
@@ -644,7 +933,7 @@ void MainWindow::removeProbeFromUI(uint32_t sn) {
     onLog(sn, "[SYS] Probe physically disconnected and securely removed from system.");
 }
 
-void MainWindow::addProbeToUI(uint32_t sn, ProbeType type) {
+void MainWindow::addProbeToUI(uint32_t sn, ProbeType type, bool useXdsAdapter) {
     BaseWorker *w = nullptr;
     QString typeStr = "";
 
@@ -653,14 +942,40 @@ void MainWindow::addProbeToUI(uint32_t sn, ProbeType type) {
         typeStr = "J-Link";
         onLog(sn, "[SYS] Engine assigned: SEGGER J-Link DLL.");
     } else {
-        int ocdPort = 6666 + activeWorkers.size();
-        w = new OpenOcdWorker(sn, ocdPort, this);
-        typeStr = "XDS110/DAP";
-        onLog(sn, "[SYS] Engine assigned: OpenOCD TCP Server.");
+        /* 自动发现 OpenOCD 安装位置 (xPack / 系统目录 / PATH) */
+        static QString ocdBin, ocdScripts;
+        if (ocdBin.isEmpty()) {
+            QStringList bins = {
+                "C:/ti/openocd-xpack/xpack-openocd-0.12.0-7/bin/openocd.exe",
+                "C:/ti/openocd/bin/openocd.exe",
+                "C:/OpenOCD/bin/openocd.exe",
+                "C:/Program Files/OpenOCD/bin/openocd.exe"
+            };
+            for (const QString &b : bins) { if (QFile::exists(b)) { ocdBin = b; break; } }
+            QStringList scr = {
+                "C:/ti/openocd-xpack/xpack-openocd-0.12.0-7/openocd/scripts",
+                "C:/ti/openocd/share/openocd/scripts",
+                "C:/OpenOCD/share/openocd/scripts",
+                "C:/Program Files/OpenOCD/share/openocd/scripts"
+            };
+            for (const QString &s2 : scr) { if (QDir(s2).exists()) { ocdScripts = s2; break; } }
+        }
+        int ocdPort = 3334 + activeWorkers.size();  // 6666 落在 Hyper-V 排除端口段(6515-6714)，OpenOCD 无法绑定
+        w = new OpenOcdWorker(sn, ocdPort, useXdsAdapter, ocdBin, ocdScripts, this);
+        if (useXdsAdapter) {
+            typeStr = "XDS110 (OpenOCD)";
+            onLog(sn, ocdBin.isEmpty() ? "[SYS] Engine: OpenOCD (openocd.exe 需在 PATH, 否则无法连接 XDS110)."
+                                       : QString("[SYS] Engine: OpenOCD + XDS110 native driver (%1).").arg(ocdBin));
+        } else {
+            typeStr = "DAPLink (OpenOCD)";
+            onLog(sn, "[SYS] Engine: OpenOCD + CMSIS-DAP driver.");
+        }
     }
 
     w->fwPath = txtFwPath->text();
+    w->fwPath = txtFwPath->text();
     w->setSpeed(cmbSpeed->currentText().remove(" kHz").toInt());
+    w->pollIntervalMs = spinPollMs ? spinPollMs->value() : 150;
 
     connect(w, &BaseWorker::sigStatus, this, &MainWindow::onStatus);
     connect(w, &BaseWorker::sigUuid, this, &MainWindow::onUuid);
@@ -724,6 +1039,7 @@ void MainWindow::addProbeToUI(uint32_t sn, ProbeType type) {
     probeTable->setCellWidget(row, 7, wAct);
 
     w->start();
+    QJsonObject a3; a3["type"]="probe_added"; a3["sn"]=QString::number(sn); a3["kind"]=typeStr; ipcBroadcast(a3);
 }
 
 void MainWindow::initDatabase() {
@@ -840,8 +1156,9 @@ void MainWindow::onActiveProbeChanged() {
     seriesVBatt->clear(); seriesBrt->clear(); plotTime = 0;
 
     if (activeWorkers.contains(activeSn)) {
-        lblVer->setText("FW: " + probeUuids.value(activeSn, "N/A"));
+        lblVer->setText("FW: " + probeFwVers.value(activeSn, "N/A"));
         txtUuid->setText(probeUuids.value(activeSn, ""));
+    QJsonObject a2; a2["type"]="active"; a2["sn"]=QString::number(activeSn); ipcBroadcast(a2);
     }
 }
 
@@ -886,6 +1203,8 @@ void MainWindow::onStatus(uint32_t sn, int code, const QString& msg) {
     int row = probeRowMap.value(sn, -1);
     if (row >= 0) {
         QTableWidgetItem *item = probeTable->item(row, 2);
+    lastStatusCode[sn] = code; lastStatusMsg[sn] = msg;
+    QJsonObject s1; s1["type"]="status"; s1["sn"]=QString::number(sn); s1["code"]=code; s1["msg"]=msg; ipcBroadcast(s1);
         if (item) {
             item->setText(msg);
             item->setForeground(code == 1 ? QColor("#198754") : QColor("#DC3545"));
@@ -907,6 +1226,8 @@ void MainWindow::onStatus(uint32_t sn, int code, const QString& msg) {
 
 void MainWindow::onUuid(uint32_t sn, const QString& uuid) {
     probeUuids[sn] = uuid;
+    lastUuid[sn] = uuid;
+    QJsonObject u1; u1["type"]="uuid"; u1["sn"]=QString::number(sn); u1["uuid"]=uuid; ipcBroadcast(u1);
     int row = probeRowMap.value(sn, -1);
     if (row >= 0) {
         QTableWidgetItem *item = probeTable->item(row, 3);
@@ -921,6 +1242,9 @@ void MainWindow::onUuid(uint32_t sn, const QString& uuid) {
 
 void MainWindow::onFwVer(uint32_t sn, const QString& ver) {
     int row = probeRowMap.value(sn, -1);
+    probeFwVers[sn] = ver;
+    lastFwVer[sn] = ver;
+    QJsonObject f1; f1["type"]="fwver"; f1["sn"]=QString::number(sn); f1["ver"]=ver; ipcBroadcast(f1);
     if (row >= 0) {
         QTableWidgetItem *item = probeTable->item(row, 4);
         if (item) {
@@ -933,6 +1257,7 @@ void MainWindow::onFwVer(uint32_t sn, const QString& ver) {
 
 void MainWindow::onProgress(uint32_t sn, int pct, const QString& text) {
     int row = probeRowMap.value(sn, -1);
+    QJsonObject p1; p1["type"]="progress"; p1["sn"]=QString::number(sn); p1["pct"]=pct; p1["text"]=text; ipcBroadcast(p1);
     if (row >= 0) {
         QProgressBar* pb = (QProgressBar*)probeTable->cellWidget(row, 6);
         if (pb) {
@@ -972,15 +1297,18 @@ void MainWindow::onLog(uint32_t sn, const QString& text) {
         QString prefix = (sn == 0) ? "[SYS]" : QString("[SN:%1]").arg(sn);
         txtGlobalLog->append(QString("<span style='color:%1;'><b>%2</b> %3</span>").arg(color).arg(prefix).arg(line.toHtmlEscaped()));
     }
+    QJsonObject l1; l1["type"]="log"; l1["sn"]=QString::number(sn); l1["text"]=text; ipcBroadcast(l1);
     txtGlobalLog->moveCursor(QTextCursor::End);
 }
 
 void MainWindow::onMsg(uint32_t sn, const QString& title, const QString& text) {
+    QJsonObject m1; m1["type"]="msg"; m1["sn"]=QString::number(sn); m1["title"]=title; m1["text"]=text; ipcBroadcast(m1);
     if(title == "Error") QMessageBox::critical(this, title, QString("[SN: %1] ").arg(sn) + text);
     else QMessageBox::information(this, title, QString("[SN: %1] ").arg(sn) + text);
 }
 
 void MainWindow::onAutoTestRes(uint32_t sn, bool success, const QString& msg) {
+    QJsonObject a1; a1["type"]="autotest"; a1["sn"]=QString::number(sn); a1["ok"]=success; a1["msg"]=msg; ipcBroadcast(a1);
     if (sn != cmbActiveProbe->currentData().toUInt()) return;
     lblPassFail->setText(success ? "PASS" : "FAIL");
     lblPassFail->setStyleSheet(success ? "background-color: #198754; color: white; font-size: 20pt; font-weight: bold; border-radius: 4px;"
@@ -990,6 +1318,7 @@ void MainWindow::onAutoTestRes(uint32_t sn, bool success, const QString& msg) {
 
 void MainWindow::onConfigRead(uint32_t sn, const QVariantMap& cfg) {
     if (sn != cmbActiveProbe->currentData().toUInt()) return;
+    QJsonObject c1; c1["type"]="config"; c1["sn"]=QString::number(sn); c1["fields"]=QJsonObject::fromVariantMap(cfg); ipcBroadcast(c1);
     uint32_t feat = cfg["feat"].toUInt();
     for(auto it = featureCheckboxes.begin(); it != featureCheckboxes.end(); ++it) {
         it.value()->setChecked(feat & (1 << it.key()));
@@ -1002,13 +1331,15 @@ void MainWindow::onConfigRead(uint32_t sn, const QVariantMap& cfg) {
 
 void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     if (sn != cmbActiveProbe->currentData().toUInt()) return;
+    lastTelemetry[sn] = data;
+    QJsonObject t1; t1["type"]="telemetry"; t1["sn"]=QString::number(sn); t1["fields"]=QJsonObject::fromVariantMap(data); ipcBroadcast(t1);
 
-    QStringList states = {"OFF", "Unlocking", "Running", "LVP Crit", "FlashMode", "ALS Err", "TestMode"};
+    QStringList states = {"OFF", "RUN", "LVP_CRIT", "FLASH", "TEST", "ALS_ERR"};
     QStringList sns = {"OK", "Sleep/Dis", "I2C Err"};
     int st = data["state"].toInt();
     int sen = data["sensor"].toInt();
 
-    monVars["state"]->setText(st < states.size() ? states[st] : "Unk");
+    monVars["state"]->setText(st >= 0 && st < states.size() ? states[st] : "Unk");
     monVars["vbatt"]->setText(data["vbatt"].toString());
     monVars["dyn_r"]->setText(QString::number(data["dyn_r"].toInt() / 1000.0, 'f', 1));
     monVars["level"]->setText("Gear " + data["level"].toString());
@@ -1026,13 +1357,28 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     monVars["i_avg"]->setText(QString::number(data["i_avg"].toInt() / 1000.0, 'f', 1));
     monVars["i_peak"]->setText(QString::number(data["i_peak"].toInt() / 1000.0, 'f', 1));
 
+    /* 平均电流说明: I_avg = I_peak x 实际PWM占空比; 占空比 = (2399-pwm)/2399 */
+    uint32_t pwm = data["pwm"].toUInt();
+    double duty = (pwm >= 2399) ? 0.0 : (2399 - pwm) / 2399.0;
+    monVars["duty"]->setText(QString("%1%").arg(duty * 100.0, 0, 'f', 1));
+
     monVars["sensor"]->setText(sen < 3 ? sns[sen] : "Unk");
     monVars["err_cnt"]->setText(data["err_cnt"].toString());
     monVars["lux"]->setText(data["lux"].toString());
     monVars["lux_raw"]->setText(data["lux_raw"].toString());
 
-    monVars["raw_k_m"]->setText(data["raw_k_m"].toInt() ? "Released (1)" : "PRESSED (0)");
-    monVars["raw_k_p"]->setText(data["raw_k_p"].toInt() ? "Released (1)" : "PRESSED (0)");
+    monVars["raw_k_m"]->setText(data["raw_k_m"].toInt() ? "Released" : "PRESSED");
+    monVars["raw_k_p"]->setText(data["raw_k_p"].toInt() ? "Released" : "PRESSED");
+
+    monVars["nvm_dirty"]->setText(data["f_dirty"].toInt() ? "DIRTY" : "Clean");
+    monVars["nvm_fail"]->setText(data["nvm_fail"].toString());
+    monVars["inactivity"]->setText(QString::number(data["inactivity"].toInt()) + "s");
+    monVars["nvm_seq"]->setText(data["nvm_seq"].toString());
+    monVars["nvm_sector"]->setText(QString("0x%1").arg(data["nvm_sector"].toUInt(), 8, 16, QChar('0')).toUpper());
+    monVars["nvm_slot"]->setText(data["nvm_slot"].toString());
+    monVars["ovr_mode"]->setText(data["ovr_led_mode"].toString());
+    monVars["cmd_ack"]->setText(data["cmd_ack"].toString());
+    monVars["fw_ver"]->setText(data["fw_ver"].toString());
 
     QString flags = "";
     if (data["f_dim"].toInt()) flags += "[DIMMED] ";
@@ -1046,7 +1392,6 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     seriesBrt->append(plotTime, data["lux"].toUInt());
     if(plotTime > 100) axisX->setRange(plotTime - 100, plotTime);
 }
-
 void MainWindow::onMemRead() {
     bool ok;
     uint32_t addr = txtMemAddr->text().toUInt(&ok, 16);
@@ -1074,6 +1419,7 @@ void MainWindow::onMemWrite() {
 
 void MainWindow::onMemReadRes(uint32_t sn, uint32_t addr, uint32_t val, int size) {
     if (sn != cmbActiveProbe->currentData().toUInt()) return;
+    QJsonObject r1; r1["type"]="memread"; r1["sn"]=QString::number(sn); r1["addr"]=QString("0x%1").arg(addr,8,16,QChar('0')); r1["val"]=QString("0x%1").arg(val,size*2,16,QChar('0')); r1["size"]=size; ipcBroadcast(r1);
     int chars = (size == 4) ? 8 : (size == 2) ? 4 : 2;
     txtMemVal->setText(QString("0x%1").arg(val, chars, 16, QChar('0')).toUpper());
 }

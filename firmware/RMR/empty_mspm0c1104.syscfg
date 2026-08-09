@@ -18,6 +18,7 @@ const GPIO2  = GPIO.addInstance();
 const GPIO3  = GPIO.addInstance();
 const PWM    = scripting.addModule("/ti/driverlib/PWM", {}, false);
 const PWM1   = PWM.addInstance();
+const SYSCTL = scripting.addModule("/ti/driverlib/SYSCTL");
 const VREF   = scripting.addModule("/ti/driverlib/VREF");
 const WWDT   = scripting.addModule("/ti/driverlib/WWDT", {}, false);
 const WWDT1  = WWDT.addInstance();
@@ -25,9 +26,12 @@ const WWDT1  = WWDT.addInstance();
 /**
  * Write custom configuration values to the imported modules.
  */
-ADC121.$name          = "ADC12_0";
-ADC121.adcMem0vref    = "VREF";
-ADC121.adcMem0chansel = "DL_ADC12_INPUT_CHAN_15";
+ADC121.$name             = "ADC12_0";
+ADC121.adcMem0vref       = "VREF";
+ADC121.adcMem0chansel    = "DL_ADC12_INPUT_CHAN_15";
+ADC121.powerDownMode     = "DL_ADC12_POWER_DOWN_MODE_MANUAL";
+ADC121.enabledInterrupts = ["DL_ADC12_INTERRUPT_MEM0_RESULT_LOADED"];
+ADC121.sampleTime0       = "1ms";
 
 const Board = scripting.addModule("/ti/driverlib/Board", {}, false);
 
@@ -60,10 +64,16 @@ PWM1.ccIndex                    = [0];
 PWM1.timerCount                 = 2400;
 PWM1.PWM_CHANNEL_0.$name        = "ti_driverlib_pwm_PWMTimerCC0";
 PWM1.ccp0PinConfig.$name        = "ti_driverlib_gpio_GPIOPinGeneric0";
+PWM1.ccp0PinConfig.enableConfig = true;
+PWM1.ccp0PinConfig.invert       = "ENABLE";
 PWM1.peripheral.$assign         = "TIMG8";
 PWM1.peripheral.ccp0Pin.$assign = "PA0";
 
-const SYSCTL = scripting.addModule("/ti/driverlib/SYSCTL", {}, false);
+
+VREF.checkVREFReady       = true;
+VREF.advClockConfigEnable = true;
+VREF.advSHSample          = 2;
+VREF.advSHHold            = 200;
 
 WWDT1.$name = "WWDT0";
 

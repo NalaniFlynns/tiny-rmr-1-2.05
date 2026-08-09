@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <QMainWindow>
 #include <QTableWidget>
 #include <QSqlDatabase>
@@ -20,6 +20,12 @@
 #include <QtCharts/QChartView>
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QValueAxis>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QHash>
 
 #include "DebugWorkers.h"
 
@@ -70,9 +76,18 @@ private:
     void saveLogToDb(const QString& uuid, bool success);
     QString parseHexVersion(const QString& path);
 
-    void addProbeToUI(uint32_t sn, ProbeType type);
+    void addProbeToUI(uint32_t sn, ProbeType type, bool useXdsAdapter = false);
     void removeProbeFromUI(uint32_t sn);
     void enqueueToActive(const Command& cmd);
+
+    void setupIpc();
+    void applyTheme();
+    void setFwPath(const QString& path);
+    void ipcSend(QTcpSocket *s, const QJsonObject& obj);
+    void ipcBroadcast(const QJsonObject& obj);
+    void ipcSendHello(QTcpSocket *s);
+    void handleIpcRead(QTcpSocket *s);
+    void handleIpcCommand(QTcpSocket *s, const QJsonObject& cmd);
 
     QSqlDatabase db;
     int sessionCounter = 0;
@@ -80,6 +95,7 @@ private:
     QMap<uint32_t, BaseWorker*> activeWorkers;
     QMap<uint32_t, int> probeRowMap;
     QMap<uint32_t, QString> probeUuids;
+    QMap<uint32_t, QString> probeFwVers;
     QTimer *autoScanTimer;
 
     QLabel *lblIndicator;
@@ -115,6 +131,8 @@ private:
     QLineEdit *txtMemVal;
 
     QComboBox *cmbLedMode;
+    QSpinBox *spinPollMs;
+    QSpinBox *spinKeyHoldMs;
     QSpinBox *spinLed;
     QCheckBox *chkBlockPhysKeys;
 
@@ -128,4 +146,14 @@ private:
     QValueAxis *axisY1;
     QValueAxis *axisY2;
     int plotTime = 0;
+
+    /* 本地 IPC 调试接口 (127.0.0.1:7345, JSON 行协议) */
+    QTcpServer *ipcServer = nullptr;
+    QList<QTcpSocket*> ipcClients;
+    QHash<QTcpSocket*, QByteArray> ipcBuffers;
+    QHash<uint32_t, QVariantMap> lastTelemetry;
+    QHash<uint32_t, QString> lastUuid;
+    QHash<uint32_t, QString> lastFwVer;
+    QHash<uint32_t, int> lastStatusCode;
+    QHash<uint32_t, QString> lastStatusMsg;
 };

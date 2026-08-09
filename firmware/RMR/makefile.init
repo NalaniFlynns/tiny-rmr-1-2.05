@@ -1,0 +1,12 @@
+# ============================================================================
+# makefile.init - 用户自定义构建钩子（CCS 重新生成 makefile 时不会被覆盖）
+# 目的: 根治 tiarmhex.exe 生成 .hex 时 .fw_version 段内容错误的问题。
+#       链接完成后用 tiarmobjcopy 重新生成 Intel HEX, 覆盖 tiarmhex 的产物。
+# ============================================================================
+
+# 让 all 目标额外依赖 post_build_hex (依赖合并, 不影响原构建流程)
+all: post_build_hex
+
+# 先确保 RMR.out 已链接, 再用 objcopy 生成正确的 RMR.hex
+post_build_hex: RMR.out
+	"$(CG_TOOL_ROOT)/bin/tiarmobjcopy" -O ihex "RMR.out" "RMR.hex"

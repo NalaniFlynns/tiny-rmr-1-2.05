@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <QThread>
 #include <QLibrary>
 #include <QMutex>
@@ -10,7 +10,7 @@
 constexpr uint32_t BASE_ADDR = 0x20000000;
 constexpr uint32_t ADDR_UUID = 0x41C40010;
 
-// 【核心更新】：严格对齐新版 Test_Mailbox_t 的内存结构
+// 銆愭牳蹇冩洿鏂般€戯細涓ユ牸瀵归綈鏂扮増 Test_Mailbox_t 鐨勫唴瀛樼粨鏋?
 #define OFS_MAGIC               0x00
 #define OFS_VERSION             0x04
 #define OFS_HOST_VERSION        0x06
@@ -42,8 +42,9 @@ constexpr uint32_t ADDR_UUID = 0x41C40010;
 #define OFS_STATE_OVERSHOT      0x52
 #define OFS_STATE_DEBUG         0x53
 #define OFS_NVM_DIRTY           0x54
-#define OFS_OVR_BLOCK_PHYS_KEYS 0x55
-// 0x56, 0x57 (Padding)
+#define OFS_NVM_SAVE_FAIL_CNT   0x55
+#define OFS_OVR_BLOCK_PHYS_KEYS 0x56
+// 0x57 (Padding)
 #define OFS_INACTIVITY_SEC      0x58
 #define OFS_NVM_SEQ_ID          0x5C
 #define OFS_NVM_SECTOR          0x60
@@ -65,7 +66,10 @@ constexpr uint32_t ADDR_UUID = 0x41C40010;
 #define OFS_CFG_ALS_MIN_BRT     0x90
 #define OFS_CFG_LVP_CRIT        0x94
 #define OFS_CFG_LVP_EXT         0x98
-#define OFS_FW_VER_STR          0x9C
+#define OFS_CFG_ALS_SQRT        0x9C
+#define OFS_CFG_ALS_CAP_LOW     0x9D
+#define OFS_CFG_ALS_CAP_HIGH    0x9E
+#define OFS_FW_VER_STR          0xA0
 
 enum class CmdType { FLASH, ENTER_TEST, WRITE_8, WRITE_16, WRITE_32, READ_CFG, SEND_SYS_CMD, AUTO_CALIBRATE, AUTO_TEST, READ_MEM_ABS, WRITE_MEM_ABS };
 
@@ -94,6 +98,7 @@ public:
     bool autoFlashEnabled = false;
     QString fwPath;
     bool enablePolling = false;
+    int pollIntervalMs = 150;   /* 轮询间隔(ms), J-Link/OpenOCD 可持续会话可达 10-50Hz */
 
 signals:
     void sigStatus(uint32_t sn, int code, const QString& msg);
@@ -119,6 +124,7 @@ protected:
     void processCommandGeneric(const Command& cmd);
     void pollTelemetryGeneric();
     QString readUuidGeneric();
+    QString readFwVersionGeneric();
     bool syncSysCmdGeneric(uint32_t sys_cmd);
 
     virtual bool checkTargetConnected() = 0;
@@ -184,9 +190,12 @@ private:
 class OpenOcdWorker : public BaseWorker {
     Q_OBJECT
 public:
-    explicit OpenOcdWorker(uint32_t sn, int port, QObject *parent = nullptr);
+    explicit OpenOcdWorker(uint32_t sn, int port, bool useXds110Adapter, const QString& openocdPath, const QString& openocdScripts, QObject *parent = nullptr);
     ~OpenOcdWorker() override;
 protected:
+    bool useXds110 = false;
+    QString ocdBinPath;
+    QString ocdScriptsPath;
     void run() override;
     bool checkTargetConnected() override;
     void write32(uint32_t ofs, uint32_t val) override;
