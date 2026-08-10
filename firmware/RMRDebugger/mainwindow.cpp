@@ -747,8 +747,8 @@ void MainWindow::setupUI() {
     lPoll->addWidget(spinPollMs);
     vMon->addLayout(lPoll);
 
-    QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "HW P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(Filt)", "Lux(RAW)", "ALS Off", "Btn[-]", "Btn[+]", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags"};
-    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "p_hw", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "als_off", "raw_k_m", "raw_k_p", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags"};
+    QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "HW P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(Filt)", "Lux(RAW)", "ALS Off", "Btn[-]", "Btn[+]", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags", "Params"};
+    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "p_hw", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "als_off", "raw_k_m", "raw_k_p", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags", "cfg_params"};
     const int MON_COLS = 10;
     QGridLayout *gridMon = new QGridLayout();
     gridMon->setHorizontalSpacing(6);
@@ -807,7 +807,7 @@ void MainWindow::setupUI() {
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
         if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
     });
-    QPushButton *btnBoth = new QPushButton("[+&-]");
+    QPushButton *btnBoth = new QPushButton("[+&&-]");
     btnBoth->setToolTip("Hold both: 1.5s = power on (OFF) / power off (RUN); 5s = toggle ALS <-> manual");
     connect(btnBoth, &QPushButton::pressed, this, [this](){
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
@@ -820,13 +820,12 @@ void MainWindow::setupUI() {
         if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
     });
     lKey->addWidget(btnPlus); lKey->addWidget(btnMinus); lKey->addWidget(btnBoth);
-    lKey->addWidget(new QLabel("Hold:"));
     spinKeyHoldMs = new QSpinBox();
     spinKeyHoldMs->setRange(100, 5000);
     spinKeyHoldMs->setValue(600);
     spinKeyHoldMs->setSuffix(" ms");
     spinKeyHoldMs->setToolTip("Tap hold duration (debounce 20ms < tap < 1500ms).");
-    lKey->addWidget(spinKeyHoldMs);
+
     QPushButton *btnTapPlus = new QPushButton("Tap [+]");
     connect(btnTapPlus, &QPushButton::clicked, this, [this](){
         int hold = spinKeyHoldMs->value();
@@ -847,7 +846,7 @@ void MainWindow::setupUI() {
             if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
         });
     });
-    QPushButton *btnTapBoth = new QPushButton("Tap [+&-]");
+    QPushButton *btnTapBoth = new QPushButton("Tap [+&&-]");
     connect(btnTapBoth, &QPushButton::clicked, this, [this](){
         int hold = spinKeyHoldMs->value();
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
@@ -859,7 +858,12 @@ void MainWindow::setupUI() {
             if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
         });
     });
-    lKey->addWidget(btnTapPlus); lKey->addWidget(btnTapMinus); lKey->addWidget(btnTapBoth);
+    vOvr->addLayout(lKey);
+    QHBoxLayout *lTap = new QHBoxLayout();
+    lTap->addWidget(new QLabel("Hold:"));
+    lTap->addWidget(spinKeyHoldMs);
+    lTap->addWidget(btnTapPlus); lTap->addWidget(btnTapMinus); lTap->addWidget(btnTapBoth);
+    vOvr->addLayout(lTap);
     QHBoxLayout *lPwr = new QHBoxLayout();
     QPushButton *btnPwrOn = new QPushButton("Power ON");
     btnPwrOn->setObjectName("BtnGreen");
@@ -1727,6 +1731,7 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     monVars["nvm_sector"]->setText(QString("0x%1").arg(data["nvm_sector"].toUInt(), 8, 16, QChar('0')).toUpper());
     monVars["nvm_slot"]->setText(data["nvm_slot"].toString());
     monVars["ovr_mode"]->setText(data["ovr_led_mode"].toString());
+    monVars["cfg_params"]->setText(QString("0x%1").arg(data["cfg_params"].toUInt(), 8, 16, QChar('0')).toUpper());
     monVars["cmd_ack"]->setText(data["cmd_ack"].toString());
     monVars["fw_ver"]->setText(data["fw_ver"].toString());
 

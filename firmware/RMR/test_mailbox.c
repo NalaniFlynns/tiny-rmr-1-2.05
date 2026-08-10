@@ -35,6 +35,7 @@ void test_mailbox_task(void) {
     g_test_box.vbatt_mv = g_vbatt_mv_filtered;
     g_test_box.vbatt_raw_mv = g_vbatt_mv_raw;
     g_test_box.sys_state_mirror = sys_state;
+    g_test_box.cfg_params = sys_memory.params;   /* 每 tick 同步, 让调试器实时显示挡位/ALS偏移变化 */
     g_test_box.current_level = sys_memory.params & 0xFF;
     g_test_box.current_brt_val = g_current_brt; 
     g_test_box.current_pwm_val = g_last_applied_pwm; 
