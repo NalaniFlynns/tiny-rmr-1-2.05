@@ -86,6 +86,10 @@ void test_mailbox_task(void) {
         g_test_box.cfg_als_cap_high_x100 = sys_memory.als_cap_high_x100;
         g_test_box.status = TEST_ST_IDLE;
         g_test_box.cmd_ack = 0;
+        /* ???????????, ?? ovr_brt_val=0 ???????? */
+        if (g_test_box.ovr_led_mode == 0 && g_test_box.ovr_brt_val == 0 && g_current_brt > 0) {
+            g_test_box.ovr_brt_val = g_current_brt;
+        }
     } else if (!auth_ok && sys_state == SYS_TEST_MODE) {
         NVIC_SystemReset();   /* 授权丢失 -> 复位 */
     }

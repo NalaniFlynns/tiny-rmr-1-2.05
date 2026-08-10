@@ -14,6 +14,7 @@
 - **LVP_CRIT 迟滞自恢复**：进入 `SYS_LVP_CRIT` 后当电压回升 +100mV（`BATT_STARTUP_HYSTERESIS_MV`）自动恢复 `SYS_RUN`，根治低电压时的 2s 周期債动闪烁（明亮每 2s 瞬间暗一下）和长期卡在 LVP 状态问题
 - **调试器 PWM 显示**：监视栏 PWM 改为“当前值 / 2399”，与寄存器原始值对应
 - **图表实时刷新修复**：图表数据改用批量 `replace()` 裁剪窗口外点（避免逐个 `remove(0)` 触发 QtCharts 重排异常），并新增 200ms 定时强制重绘；Y 轴自适应新增最小跨度（电压 250mV / 光照 2000 / PWM·BRT 200），避免 raw ADC 噪声被放大成尖峰
+- **进入测试态不再闪灭**：调试授权（unlock）进入 TEST 时保持当前亮度（ovr_brt_val 默认取 g_current_brt），修复此前 ovr_brt_val=0 导致进入测试模式瞬间 LED 熄灭闪烁的问题
 - **OpenOCD 端口修复**：Tcl 端口改用 `3334 + 探针序号`，避开 Windows Hyper-V/WinNAT 动态排除端口段（6515-6714 ，含 6666），修复 XDS110 无法绑定 Tcl 端口导致连接失败的问题
 
 ## 更新记录（2026-08-10 晚，V4.3.1 增量 4）
@@ -151,3 +152,4 @@ tiny-rmr-1-2.05/
 ├── model/  image/      # 结构与渲染资料
 └── README.md
 ```
+

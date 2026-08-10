@@ -103,6 +103,7 @@ extern "C" {
 
 /* Defines for VREF */
 #define VREF_VOLTAGE_MV                                                     1400
+#define VREF_READY_DELAY                                                   (240)
 
 
 

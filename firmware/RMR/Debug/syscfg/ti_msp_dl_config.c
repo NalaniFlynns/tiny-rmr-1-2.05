@@ -77,6 +77,11 @@ SYSCONFIG_WEAK void SYSCFG_DL_GPIO_init(void)
 
     DL_GPIO_initPeripheralOutputFunction(GPIO_PWM_0_C0_IOMUX,GPIO_PWM_0_C0_IOMUX_FUNC);
     DL_GPIO_enableOutput(GPIO_PWM_0_C0_PORT, GPIO_PWM_0_C0_PIN);
+    
+	DL_GPIO_initPeripheralOutputFunctionFeatures(
+		 GPIO_PWM_0_C0_IOMUX, GPIO_PWM_0_C0_IOMUX_FUNC,
+		 DL_GPIO_INVERSION_ENABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
 
     DL_GPIO_initDigitalOutput(OUTPUT_PINS_VCC_EN_IOMUX);
 
@@ -175,10 +180,19 @@ SYSCONFIG_WEAK void SYSCFG_DL_ADC12_0_init(void)
     DL_ADC12_configConversionMem(ADC12_0_INST, ADC12_0_ADCMEM_0,
         DL_ADC12_INPUT_CHAN_15, DL_ADC12_REFERENCE_VOLTAGE_INTREF, DL_ADC12_SAMPLE_TIMER_SOURCE_SCOMP0, DL_ADC12_AVERAGING_MODE_DISABLED,
         DL_ADC12_BURN_OUT_SOURCE_DISABLED, DL_ADC12_TRIGGER_MODE_AUTO_NEXT, DL_ADC12_WINDOWS_COMP_MODE_DISABLED);
+    DL_ADC12_setPowerDownMode(ADC12_0_INST,DL_ADC12_POWER_DOWN_MODE_MANUAL);
+    DL_ADC12_setSampleTime0(ADC12_0_INST,24000);
+    /* Enable ADC12 interrupt */
+    DL_ADC12_clearInterruptStatus(ADC12_0_INST,(DL_ADC12_INTERRUPT_MEM0_RESULT_LOADED));
+    DL_ADC12_enableInterrupt(ADC12_0_INST,(DL_ADC12_INTERRUPT_MEM0_RESULT_LOADED));
     DL_ADC12_enableConversions(ADC12_0_INST);
 }
 
 
+static const DL_VREF_ClockConfig gVREFClockConfig = {
+    .clockSel = DL_VREF_CLOCK_LFCLK,
+    .divideRatio = DL_VREF_CLOCK_DIVIDE_1,
+};
 static const DL_VREF_Config gVREFConfig = {
     .vrefEnable     = DL_VREF_ENABLE_ENABLE,
     .bufConfig      = DL_VREF_BUFCONFIG_OUTPUT_1_4V,
@@ -188,8 +202,11 @@ static const DL_VREF_Config gVREFConfig = {
 };
 
 SYSCONFIG_WEAK void SYSCFG_DL_VREF_init(void) {
+    DL_VREF_setClockConfig(VREF,
+        (DL_VREF_ClockConfig *) &gVREFClockConfig);
     DL_VREF_configReference(VREF,
         (DL_VREF_Config *) &gVREFConfig);
+    delay_cycles(VREF_READY_DELAY);
 }
 
 
