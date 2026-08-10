@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <QThread>
 #include <QLibrary>
 #include <QMutex>
@@ -217,9 +217,11 @@ private:
     QTcpSocket *tclSocket;
     int tclPort;
     QString ocdLogBuffer;
+    qint64 lastResidualKillMs = 0;
 
     QString sendTclCommand(const QString& cmd, int timeoutMs = 1000, bool muteLog = false);
     void pumpOpenOCDLogs(bool muteLog = false);
     void startOpenOCD();
     void stopOpenOCD();
+    void killResidualOpenOCD();
 };

@@ -1,4 +1,4 @@
-﻿#include "MainWindow.h"
+#include "MainWindow.h"
 #include <QApplication>
 #include <windows.h>
     int prmMax[] = {9999, 999999, 5000, 100000, 99999999, 1000, 5000, 5000, 8, 20, 20, 20};
@@ -452,6 +452,12 @@ void MainWindow::handleIpcCommand(QTcpSocket *s, const QJsonObject& cmd) {
         bool plus = (k == "plus" || k == "both");
         bool minus = (k == "minus" || k == "both");
         if (cmd.contains("tap")) { plus = cmd["tap"].toInt() > 0; minus = false; }
+        /* 与 UI 虚拟按键一致: 非 TEST 态先自动解锁(授权后注入任意状态生效, 模式保持) */
+        const QVariantMap &kt = lastTelemetry.value(cmbActiveProbe->currentData().toUInt());
+        if (kt.isEmpty() || kt["state"].toInt() != 4) {
+            enqueueToActive(Command(CmdType::ENTER_TEST));
+            enqueueToActive(Command(CmdType::READ_CFG));
+        }
         auto release = [this, plus, minus, block]() {
             if (plus) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
             if (minus) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
@@ -851,7 +857,9 @@ void MainWindow::setupUI() {
     keyUiTimer->setInterval(100);
     auto startUiTimer = [this](){ if (!keyUiTimer->isActive()) keyUiTimer->start(); };
     auto stopUiTimer = [this](){ if (!keyPlusHeld && !keyMinusHeld && !keyBothHeld) keyUiTimer->stop(); };
-    /* 虚拟按键注入仅在固件 TEST 态生效: 非 TEST 态先自动解锁, 保证按下即有响应 */
+    /* 虚拟按键与真实按键走同一套去抖/事件状态机: 授权后任意状态生效, 模式保持(ALS 就是 ALS, MAN 就是 MAN);
+       + 键: MAN 加档 / ALS 偏移+, - 键: MAN 减档 / ALS 偏移-, 双键 5s 切换 ALS<->MAN;
+       非 TEST 态按下时先自动解锁(ENTER_TEST), 保证注入立即生效且不改变当前模式 */
     auto ensureTestMode = [this](){
         const QVariantMap &t = lastTelemetry.value(cmbActiveProbe->currentData().toUInt());
         if (t.isEmpty() || t["state"].toInt() != 4) {
@@ -861,7 +869,7 @@ void MainWindow::setupUI() {
     };
 
     btnKeyPlus = new QPushButton("[+]");
-    btnKeyPlus->setToolTip(u8"按住=+键按下(拦截物理键), 松开=松开; 短按调挡/偏移; 按钮实时显示按住时长与 PHY/OVR 状态");
+    btnKeyPlus->setToolTip(u8"按住=+键按下(拦截物理键), 松开=松开; 短按: MAN 加档 / ALS 偏移+; 保持当前模式(ALS 就是 ALS, MAN 就是 MAN), 与真实按键一致");
     auto releasePlus = [this, releaseUi, stopUiTimer](){
         keyPlusHeld = false;
         if (btnKeyPlus) releaseUi(btnKeyPlus, "[+]");
@@ -885,7 +893,7 @@ void MainWindow::setupUI() {
     });
 
     btnKeyMinus = new QPushButton("[-]");
-    btnKeyMinus->setToolTip(u8"按住=-键按下(拦截物理键), 松开=松开; 短按调挡/偏移; 按钮实时显示按住时长与 PHY/OVR 状态");
+    btnKeyMinus->setToolTip(u8"按住=-键按下(拦截物理键), 松开=松开; 短按: MAN 减档 / ALS 偏移-; 保持当前模式(ALS 就是 ALS, MAN 就是 MAN), 与真实按键一致");
     auto releaseMinus = [this, releaseUi, stopUiTimer](){
         keyMinusHeld = false;
         if (btnKeyMinus) releaseUi(btnKeyMinus, "[-]");
@@ -909,7 +917,7 @@ void MainWindow::setupUI() {
     });
 
     btnKeyBoth = new QPushButton("[+&&-]");
-    btnKeyBoth->setToolTip(u8"双键: 按住约 5s(固件 tick, 接调试器时约 9s 墙钟)切换 ALS<->手动; 1.5s=关机/开机(RUN); 松开才真正松开");
+    btnKeyBoth->setToolTip(u8"双键: 按住 5s 切换 ALS<->手动(模式保持, 与真实按键一致); 按住 1.5s 松开=关机/开机(RUN); 松开才真正松开");
     auto releaseBoth = [this, releaseUi, stopUiTimer](){
         keyBothHeld = false;
         if (btnKeyBoth) releaseUi(btnKeyBoth, "[+&&-]");

@@ -1,4 +1,4 @@
-﻿#include "DebugWorkers.h"
+#include "DebugWorkers.h"
 #include <QDebug>
 #include <QFile>
 #include <QMutexLocker>
@@ -7,6 +7,7 @@
 #include <exception>
 #include <stdexcept>
 #include <QElapsedTimer>
+#include <QDateTime>
 
 static QMutex g_jlinkInitMutex;
 
@@ -379,6 +380,24 @@ void OpenOcdWorker::startOpenOCD() {
          << "-c" << "gdb_port disabled" << "-c" << "telnet_port disabled";
     ocdProcess->start(bin, args); ocdProcess->waitForStarted();
 }
+
+
+void OpenOcdWorker::killResidualOpenOCD() {
+    /* 限频: 5s 内最多清理一次, 避免每次重试都 taskkill */
+    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (now - lastResidualKillMs < 5000) return;
+    lastResidualKillMs = now;
+    /* 检测残留 openocd.exe(上次崩溃/被强制结束遗留, 占用 XDS110 或 3334 端口导致连不上) */
+    QProcess chk;
+    chk.start("tasklist", QStringList() << "/FI" << "IMAGENAME eq openocd.exe" << "/FO" << "CSV" << "/NH");
+    if (!chk.waitForFinished(2000)) return;
+    QString out = QString::fromUtf8(chk.readAllStandardOutput());
+    if (out.contains("openocd.exe", Qt::CaseInsensitive)) {
+        emit sigLog(probeSN, "[SYS] Residual OpenOCD process detected, killing it to release probe...");
+        QProcess::execute("taskkill", QStringList() << "/F" << "/IM" << "openocd.exe");
+        msleep(300);
+    }
+}
 void OpenOcdWorker::stopOpenOCD() {
     if (tclSocket) { tclSocket->disconnectFromHost(); delete tclSocket; tclSocket = nullptr; }
     if (ocdProcess) { ocdProcess->kill(); ocdProcess->waitForFinished(); delete ocdProcess; ocdProcess = nullptr; }
@@ -410,7 +429,15 @@ void OpenOcdWorker::run() {
             if (tclSocket->waitForConnected(1500)) {
                 probeConnected = true; initialized = false;
                 emit sigLog(probeSN, QString("[SYS] %1 debug service started on TCP:%2.").arg(useXds110 ? "XDS110(OpenOCD)" : "DAPLink(OpenOCD)").arg(tclPort));
-            } else { emit sigStatus(probeSN, 0, "Awaiting Probe..."); msleep(1000); continue; }
+            } else {
+                emit sigStatus(probeSN, 0, "Awaiting Probe...");
+                /* 连接不到: 停掉本次 openocd 实例, 清理残留进程(占用 XDS110/端口的僵尸 openocd)后重试 */
+                stopOpenOCD();
+                killResidualOpenOCD();
+                tclSocket = new QTcpSocket();
+                msleep(1000);
+                continue;
+            }
         }
         if (!initialized) {
             QString res = sendTclCommand("init", 3000, true);
@@ -422,7 +449,15 @@ void OpenOcdWorker::run() {
             }
             initialized = !initFailed;
             if (initialized) { sendTclCommand(QString("adapter speed %1").arg(currentSpeedKHz), 500, true); emit sigLog(probeSN, "[SYS] OpenOCD target initialized (SWD)."); }
-            else { emit sigStatus(probeSN, 0, "Target Unresponsive"); msleep(500); }
+            else {
+                emit sigStatus(probeSN, 0, "Target Unresponsive");
+                /* 初始化失败: 完整重启 openocd 并清理残留(可能有其他实例占用目标芯片) */
+                stopOpenOCD();
+                killResidualOpenOCD();
+                tclSocket = new QTcpSocket();
+                probeConnected = false;
+                msleep(500);
+            }
         }
         bool targetConnected = initialized;
         if (targetConnected) {

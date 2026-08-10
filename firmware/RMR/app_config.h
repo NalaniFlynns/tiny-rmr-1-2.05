@@ -1,4 +1,4 @@
-﻿#ifndef APP_CONFIG_H_
+#ifndef APP_CONFIG_H_
 #define APP_CONFIG_H_
 #include "ti_msp_dl_config.h"
 #include <stdint.h>
@@ -17,10 +17,10 @@
 #define BATT_SR516SW_SINGLE_R_MOHM  25000
 
 #if POWER_SOURCE_DIRECT
-#define FW_VERSION_STR "V4.3.1_DIRECT"
+#define FW_VERSION_STR "V4.3.2_DIRECT"
 #define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
 #else
-#define FW_VERSION_STR "V4.3.1_BATT"
+#define FW_VERSION_STR "V4.3.2_BATT"
 #define CFG_DEFAULT_R_SERIES_MOHM   (HW_SERIES_R_MOHM + 2 * BATT_SR516SW_SINGLE_R_MOHM)
 #endif
 #define CFG_DEFAULT_R_BASE_MOHM     R_DYNAMIC_BASE_MOHM

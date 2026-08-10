@@ -1,4 +1,4 @@
-#include "hal_keys.h"
+﻿#include "hal_keys.h"
 #include "app_config.h"
 #include "test_mailbox.h"
 
@@ -22,7 +22,8 @@ KeyEvent_t keys_task(void) {
     uint32_t b1_val = (DL_GPIO_readPins(PORT_BTN, PIN_BT1) & PIN_BT1);
     uint32_t b2_val = (DL_GPIO_readPins(PORT_BTN, PIN_BT2) & PIN_BT2);
 
-    if (sys_state == SYS_TEST_MODE && g_test_box.magic == 0x54455354) {
+    /* 虚拟按键注入: 调试器授权(magic+host_version)后任意状态生效, 与真实按键走同一套去抖/事件状态机 */
+    if (g_test_box.magic == TEST_MAGIC && g_test_box.host_version == g_test_box.version) {
         if (g_test_box.ovr_block_phys_keys) { b1_val = PIN_BT1; b2_val = PIN_BT2; }
         if (g_test_box.ovr_key_minus) b1_val = 0;
         if (g_test_box.ovr_key_plus) b2_val = 0;

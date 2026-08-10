@@ -65,7 +65,10 @@ void mode_task(void) {
 
 #if FEATURE_ALS_MODE
     bool test_als_ovr = (sys_state == SYS_TEST_MODE && g_test_box.magic == 0x54455354 && g_test_box.ovr_als_en);
-    if ((sys_state == SYS_RUN || sys_state == SYS_LVP_CRIT || test_als_ovr) && (g_is_als_mode || test_als_ovr)) {
+    bool auth = (g_test_box.magic == 0x54455354 && g_test_box.host_version == g_test_box.version);
+    /* TEST 态保持当前模式: ALS 就是 ALS(走真实传感器曲线), MAN 就是 MAN(走档位), 与真实按键语义一致 */
+    bool als_active = test_als_ovr || (g_is_als_mode && (sys_state == SYS_RUN || sys_state == SYS_LVP_CRIT || (sys_state == SYS_TEST_MODE && auth)));
+    if (als_active) {
         if (g_tick_ms - als_tick >= TIME_ALS_POLL_INTERVAL_MS) { 
             uint32_t lux = 0;
             if (test_als_ovr) {

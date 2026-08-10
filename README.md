@@ -1,4 +1,10 @@
-﻿## 更新记录（2026-08-10，固件 V4.3.1 双版本：直连 / 2xSR516SW 电池）
+## 更新记录（2026-08-10 深夜，固件 V4.3.2 + 调试器：虚拟按键真实语义 + 连接自动清理）
+- **固件 V4.3.2**：虚拟按键注入条件由「TEST 态 + magic」放宽为「授权(magic+host_version)后任意状态生效」，与真实按键走同一套去抖/事件状态机；TEST 态保持当前模式——ALS 就是 ALS（走真实 OPT3001 传感器曲线）、MAN 就是 MAN（走档位亮度），不再被测试态强制切模式；`+` 键 MAN 加档 / ALS 偏移+，`-` 键 MAN 减档 / ALS 偏移-，双键 5s 切换 ALS<->手动，均与真实按键一致
+- **调试器自动清理**：OpenOCD 连接失败/初始化失败时自动 `taskkill` 残留 openocd.exe 进程（上次崩溃/异常遗留、占用 XDS110 或 3334 端口导致连不上），限频 5s 防抖，清理后自动重启 openocd 重连；IPC `key` 命令与 UI 虚拟按键一致，非 TEST 态先自动解锁
+- **产物**：`firmware/RMR/hex/RMR_DIRECT.hex`（`V4.3.2_DIRECT`）、`RMR_BATT.hex`（`V4.3.2_BATT`）；`RMR_Factory_Tool_V2.0/rmrdebuger.exe` 已更新
+- **实测**：XDS110 + MSPM0C1104 上验证 MAN 加减档、ALS 偏移加减、双键 5s 模式切换、模式保持；模拟残留 openocd 占用探针后重启调试器，自动清理并重连成功
+
+## 更新记录（2026-08-10，固件 V4.3.1 双版本：直连 / 2xSR516SW 电池）
 - **双版本编译**：`app_config.h` 新增编译期电源模式宏 `POWER_SOURCE_DIRECT`——`1`=稳压电源直连版（1.6-3.6V 可调电源 + 120-635Ω 可调限流电阻，不算电池内阻），`0`=电池版（2x SR516SW 串联 3.1V 标称，计入电池内阻）
 - **产物**：`firmware/RMR/hex/RMR_DIRECT.hex`（版本串 `V4.3.1_DIRECT`）、`firmware/RMR/hex/RMR_BATT.hex`（版本串 `V4.3.1_BATT`）；出厂默认 `r_series`：直连=360000mΩ（限流电阻），电池=410000mΩ（360Ω 限流 + 2×25Ω 电池内阻，SR516SW 规格书未标注内阻，取氧化银纽扣电池典型值，可经调试器写 NVM `r_series` 校准）
 - **器件规格核对**：LED=APTD1608SECK/J4-PF（超亮橙 AlGaInP，VF 2.2V 典型/2.8V max @20mA，IF DC 30mA max）——固件 `HW_LED_FORWARD_V_MV=2200`、`HW_LED_MAX_CURRENT_UA=2800` 与规格书一致；电池=SR516SW（1.55V、12.5mAh、标准放电 20µA）；MCU=MSPM0C1104（Cortex-M0+，10-bit ADC，1.4V 内部 VREF，无 SysTick 用 GPTIMER14）
@@ -12,7 +18,7 @@
 
 基于 **TI MSPM0C1104**（Cortex-M0+）的低功耗智能照明/测试设备完整项目，包含：
 
-- `firmware/RMR` — 设备固件（CCS 21 工程，tiarmclang，当前版本 **V4.3.1_PROD**）
+- `firmware/RMR` — 设备固件（CCS 21 工程，tiarmclang，当前版本 **V4.3.2_DIRECT / V4.3.2_BATT**）
 - `firmware/RMRDebugger` — 上位机调试器（Qt 6.11 + MinGW，支持 XDS110 SWD）
 - `RMR_Factory_Tool_V2.0` — 已打包的出厂调试工具（含 Qt 运行库 / OpenOCD / USB 驱动）
 - `PCB` / `model` / `image` — 硬件、结构与渲染资料
