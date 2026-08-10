@@ -8,6 +8,7 @@
 #include <QTcpSocket>
 
 constexpr uint32_t BASE_ADDR = 0x20000000;
+#define OFS_VBATT_RAW_MV        0xB0
 constexpr uint32_t ADDR_UUID = 0x41C40010;
 
 // 銆愭牳蹇冩洿鏂般€戯細涓ユ牸瀵归綈鏂扮増 Test_Mailbox_t 鐨勫唴瀛樼粨鏋?

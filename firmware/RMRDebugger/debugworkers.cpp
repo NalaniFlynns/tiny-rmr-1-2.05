@@ -68,23 +68,35 @@ void BaseWorker::processCommandGeneric(const Command& cmd) {
             uint32_t sys_cmd = cmd.arg1;
             if (sys_cmd == 3) {
                 QVariantMap cfg = cmd.mapArg;
-                write32(OFS_CFG_FEATURES, cfg["feat"].toUInt());
-                write32(OFS_CFG_R_BASE, cfg["r_base"].toUInt());
-                write32(OFS_CFG_R_SERIES, cfg["r_series"].toUInt());
-                write32(OFS_CFG_V_LED_FW, cfg["v_fw"].toUInt());
-                write32(OFS_CFG_I_MAX_UA, cfg["i_max"].toUInt());
-                write32(OFS_CFG_BATT_P_UW, cfg["p_batt"].toUInt());
-                write32(OFS_CFG_ALS_MIN_BRT, cfg["als_min"].toUInt());
-                write32(OFS_CFG_LVP_CRIT, cfg["lvp_crit"].toUInt());
-                write32(OFS_CFG_LVP_EXT, cfg["lvp_ext"].toUInt());
-                write8(OFS_CFG_ALS_SQRT, (uint8_t)(cfg["als_sqrt"].toUInt() & 0xFF));
-                write8(OFS_CFG_ALS_CAP_LOW, (uint8_t)(cfg["als_cap_low"].toUInt() & 0xFF));
-                write8(OFS_CFG_ALS_CAP_HIGH, (uint8_t)(cfg["als_cap_high"].toUInt() & 0xFF));
-                write32(OFS_CFG_LVP_EXT, cfg["lvp_ext"].toUInt());
-
-                uint32_t current_params = read32(OFS_CFG_PARAMS);
-                current_params = (current_params & 0xFFFFFF00) | (cfg["def_lvl"].toUInt() & 0xFF);
-                write32(OFS_CFG_PARAMS, current_params);
+                if (cfg.isEmpty()) {
+                    emit sigLog(probeSN, "[WARN] syscmd 3 empty map: keeping current config");
+                } else {
+                    /* 只写 map 中出现的字段, 空字段绝不写 0, 避免误清 NVM */
+                    auto w32 = [&](uint32_t ofs, const char* key){
+                        if (cfg.contains(key)) write32(ofs, cfg[key].toUInt());
+                    };
+                    auto w8 = [&](uint32_t ofs, const char* key){
+                        if (cfg.contains(key)) write8(ofs, (uint8_t)(cfg[key].toUInt() & 0xFF));
+                    };
+                    w32(OFS_CFG_FEATURES, "feat");
+                    w32(OFS_CFG_R_BASE, "r_base");
+                    w32(OFS_CFG_R_SERIES, "r_series");
+                    w32(OFS_CFG_V_LED_FW, "v_fw");
+                    w32(OFS_CFG_I_MAX_UA, "i_max");
+                    w32(OFS_CFG_BATT_P_UW, "p_batt");
+                    w32(OFS_CFG_ALS_MIN_BRT, "als_min");
+                    w32(OFS_CFG_LVP_CRIT, "lvp_crit");
+                    w32(OFS_CFG_LVP_EXT, "lvp_ext");
+                    w8(OFS_CFG_ALS_SQRT, "als_sqrt");
+                    w8(OFS_CFG_ALS_CAP_LOW, "als_cap_low");
+                    w8(OFS_CFG_ALS_CAP_HIGH, "als_cap_high");
+                    /* cfg_params: 仅替换低 8 位默认档位, 保留 ALS(bit8)/offset(bit16-23) 等高位 */
+                    if (cfg.contains("def_lvl")) {
+                        uint32_t current_params = read32(OFS_CFG_PARAMS);
+                        current_params = (current_params & 0xFFFFFF00) | (cfg["def_lvl"].toUInt() & 0xFF);
+                        write32(OFS_CFG_PARAMS, current_params);
+                    }
+                }
             }
             write32(OFS_CMD, sys_cmd);
             if(sys_cmd == 2) {
@@ -200,13 +212,14 @@ QString BaseWorker::readFwVersionGeneric() {
     return ver;
 }
 void BaseWorker::pollTelemetryGeneric() {
-    uint8_t data[0xB0] = {0};
-    readBlock(0, 0xB0, data); QVariantMap map;
+    uint8_t data[0xB8] = {0};
+    readBlock(0, 0xB8, data); QVariantMap map;
     map["magic"] = *(uint32_t*)(data + OFS_MAGIC);
     map["cmd"] = *(uint32_t*)(data + OFS_CMD);
     map["cmd_ack"] = *(uint32_t*)(data + OFS_CMD_ACK);
     map["status"] = *(uint32_t*)(data + OFS_STATUS);
     map["vbatt"] = *(uint32_t*)(data + OFS_VBATT_MV);
+    map["vbatt_raw"] = *(uint32_t*)(data + OFS_VBATT_RAW_MV);
     map["dyn_r"] = *(uint32_t*)(data + OFS_DYN_R_MOHM);
     map["level"] = *(uint16_t*)(data + OFS_CURRENT_LVL);
     map["brt"] = *(uint16_t*)(data + OFS_CURRENT_BRT);

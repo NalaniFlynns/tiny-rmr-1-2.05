@@ -564,14 +564,15 @@ void MainWindow::setupUI() {
     col1->addWidget(grpDma);
     col1->addStretch();
 
-    // =============== 鍒?2: 鏁版嵁鐩戞帶 ===============
-    QVBoxLayout *col2 = new QVBoxLayout();
-    QGroupBox *grpMon = new QGroupBox("Real-time Telemetry Monitor");
+    // =============== 实时遥测: 固定高度长条(不缩放) ===============
+    QGroupBox *grpMon = new QGroupBox("Real-time Telemetry Monitor (fixed strip)");
     QVBoxLayout *vMon = new QVBoxLayout(grpMon);
+    vMon->setSpacing(2);
+    vMon->setContentsMargins(8, 4, 8, 4);
+    QHBoxLayout *lPoll = new QHBoxLayout();
     chkPoll = new QCheckBox("Enable Background Polling");
     chkPoll->setStyleSheet("color: #0078D7; font-weight: bold;");
     connect(chkPoll, &QCheckBox::toggled, this, &MainWindow::onActiveProbeChanged);
-    QHBoxLayout *lPoll = new QHBoxLayout();
     lPoll->addWidget(chkPoll);
     lPoll->addStretch();
     lPoll->addWidget(new QLabel("Poll(ms):"));
@@ -583,24 +584,32 @@ void MainWindow::setupUI() {
     connect(spinPollMs, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v){ for (auto w : activeWorkers) w->pollIntervalMs = v; });
     lPoll->addWidget(spinPollMs);
     vMon->addLayout(lPoll);
-    vMon->addWidget(chkPoll);
 
-    QGridLayout *gridMon = new QGridLayout();
-    QStringList monTexts = {"State:", "VBATT(mV):", "Est R(m\u03a9):", "Level:", "Brt Target:", "Duty Cycle:", "V_LED(mV):", "V-Limit:", "I-Lim(Brt):", "P-Limit(W):", "I-Lim(LED):", "Est.P(mW):", "Avg I(mA):", "Peak I(mA):", "HW PWM:", "I2C Sensor:", "I2C Err:", "Lux(Filt):", "Lux(RAW):", "Btn[-]:", "Btn[+]:", "NVM:", "Save Fail:", "Inactive:", "NVM Seq:", "NVM Sector:", "NVM Slot:", "Ovr Mode:", "Cmd Ack:", "FW Ver:", "Run Flags:"};
+    QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(Filt)", "Lux(RAW)", "Btn[-]", "Btn[+]", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags"};
     QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "raw_k_m", "raw_k_p", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags"};
+    const int MON_COLS = 10;
+    QGridLayout *gridMon = new QGridLayout();
+    gridMon->setHorizontalSpacing(6);
+    gridMon->setVerticalSpacing(2);
     for (int i = 0; i < monKeys.size(); ++i) {
+        QWidget *cell = new QWidget();
+        cell->setFixedHeight(40);
+        QVBoxLayout *vCell = new QVBoxLayout(cell);
+        vCell->setContentsMargins(4, 1, 4, 1);
+        vCell->setSpacing(0);
         QLabel *l = new QLabel(monTexts[i]);
-        l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        l->setStyleSheet("border: none; color: #666666; font-size: 7pt; font-weight: bold;");
         QLineEdit *le = new QLineEdit("-");
         le->setReadOnly(true);
-        le->setStyleSheet("color: #0078D7; font-weight: bold; border: none; background: transparent;");
+        le->setFixedHeight(22);
+        le->setStyleSheet("color: #0078D7; font-weight: bold; border: 1px solid #DDDDDD; border-radius: 2px; background: #FFFFFF; padding: 0 3px; font-size: 8pt;");
         monVars[monKeys[i]] = le;
-        gridMon->addWidget(l, i, 0);
-        gridMon->addWidget(le, i, 1);
+        vCell->addWidget(l);
+        vCell->addWidget(le);
+        gridMon->addWidget(cell, i / MON_COLS, i % MON_COLS);
     }
+    for (int c = 0; c < MON_COLS; ++c) gridMon->setColumnStretch(c, 1);
     vMon->addLayout(gridMon);
-    vMon->addStretch();
-    col2->addWidget(grpMon, 1);
 
     // =============== 鍒?3: 鎺ョ瑕嗙洊鍙婃祴璇?===============
     QVBoxLayout *col3 = new QVBoxLayout();
@@ -688,27 +697,24 @@ void MainWindow::setupUI() {
     col3->addStretch();
 
     QWidget *wCol1 = new QWidget(); wCol1->setLayout(col1);
-    QScrollArea *saCol1 = new QScrollArea(); saCol1->setWidget(wCol1); saCol1->setWidgetResizable(true); saCol1->setFrameShape(QFrame::NoFrame); saCol1->setMinimumWidth(280);
-    QWidget *wCol2 = new QWidget(); wCol2->setLayout(col2);
-    QScrollArea *saCol2 = new QScrollArea(); saCol2->setWidget(wCol2); saCol2->setWidgetResizable(true); saCol2->setFrameShape(QFrame::NoFrame); saCol2->setMinimumWidth(300);
+    QScrollArea *saCol1 = new QScrollArea(); saCol1->setWidget(wCol1); saCol1->setWidgetResizable(true); saCol1->setFrameShape(QFrame::NoFrame); saCol1->setMinimumWidth(340);
     QWidget *wCol3 = new QWidget(); wCol3->setLayout(col3);
-    QScrollArea *saCol3 = new QScrollArea(); saCol3->setWidget(wCol3); saCol3->setWidgetResizable(true); saCol3->setFrameShape(QFrame::NoFrame); saCol3->setMinimumWidth(300);
-    /* 深色模式下 QScrollArea viewport/滚动条默认用深色 Base，会导致三列内容四周出现黑边；统一强制浅色 */
+    QScrollArea *saCol3 = new QScrollArea(); saCol3->setWidget(wCol3); saCol3->setWidgetResizable(true); saCol3->setFrameShape(QFrame::NoFrame); saCol3->setMinimumWidth(340);
+    /* 深色模式下 QScrollArea viewport/滚动条默认用深色 Base，会导致列内容四周出现黑边；统一强制浅色 */
     const QColor colBg("#F4F6F9");
-    for (QScrollArea *sa : {saCol1, saCol2, saCol3}) {
+    for (QScrollArea *sa : {saCol1, saCol3}) {
         QPalette vpPal = sa->viewport()->palette();
         vpPal.setColor(QPalette::Base, colBg);
         sa->viewport()->setPalette(vpPal);
         sa->viewport()->setAutoFillBackground(true);
     }
-    for (QWidget *wc : {wCol1, wCol2, wCol3}) {
+    for (QWidget *wc : {wCol1, wCol3}) {
         wc->setAutoFillBackground(true);
         QPalette wcPal = wc->palette();
         wcPal.setColor(QPalette::Window, colBg);
         wc->setPalette(wcPal);
     }
     hCols->addWidget(saCol1, 1);
-    hCols->addWidget(saCol2, 1);
     hCols->addWidget(saCol3, 1);
     vTestMain->addLayout(hCols, 1);
 
@@ -732,7 +738,7 @@ void MainWindow::setupUI() {
     chart->addSeries(seriesBrt);
 
     axisX = new QValueAxis(); axisX->setRange(0, 100); axisX->setLabelFormat("%d");
-    axisY1 = new QValueAxis(); axisY1->setRange(2000, 4200); axisY1->setLinePenColor(Qt::red); axisY1->setLabelsColor(Qt::red);
+    axisY1 = new QValueAxis(); axisY1->setRange(1800, 4500); axisY1->setLinePenColor(Qt::red); axisY1->setLabelsColor(Qt::red);
     axisY2 = new QValueAxis(); axisY2->setRange(0, 10000); axisY2->setLinePenColor(Qt::blue); axisY2->setLabelsColor(Qt::blue);
 
     chart->addAxis(axisX, Qt::AlignBottom);
@@ -744,8 +750,11 @@ void MainWindow::setupUI() {
     QChartView *chartView = new QChartView(chart);
     chartView->setRenderHint(QPainter::Antialiasing);
     chartView->setStyleSheet("background: transparent; border: 1px solid #CCC; border-radius: 4px;");
-    chartView->setMinimumHeight(120);
-    vTestMain->addWidget(chartView, 1);
+    chartView->setFixedHeight(170);
+    /* 固定高度长条在最上方, 图表固定高度居中, 下方两列填充剩余空间 */
+    vTestMain->addWidget(grpMon);
+    vTestMain->addWidget(chartView);
+    vTestMain->addLayout(hCols, 1);
 
     tabs->addTab(tabTest, "2. Test & Calibration Mode");
     mainSplitter->addWidget(tabs);
@@ -1340,7 +1349,8 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     int sen = data["sensor"].toInt();
 
     monVars["state"]->setText(st >= 0 && st < states.size() ? states[st] : "Unk");
-    monVars["vbatt"]->setText(data["vbatt"].toString());
+    /* 电压显示原始 ADC 值(不滤波/不平滑); 旧固件无 vbatt_raw 时回退 vbatt */
+    monVars["vbatt"]->setText(data.contains("vbatt_raw") ? data["vbatt_raw"].toString() : data["vbatt"].toString());
     monVars["dyn_r"]->setText(QString::number(data["dyn_r"].toInt() / 1000.0, 'f', 1));
     monVars["level"]->setText("Gear " + data["level"].toString());
 
@@ -1388,9 +1398,13 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     monVars["flags"]->setText(flags.isEmpty() ? "None" : flags.trimmed());
 
     plotTime++;
-    seriesVBatt->append(plotTime, data["vbatt"].toUInt());
+    /* 限制曲线点数, 防止长期运行无限增长导致卡死 */
+    const int MAX_PLOT = 400;
+    if (seriesVBatt->count() >= MAX_PLOT) seriesVBatt->remove(0);
+    if (seriesBrt->count() >= MAX_PLOT) seriesBrt->remove(0);
+    seriesVBatt->append(plotTime, data.contains("vbatt_raw") ? data["vbatt_raw"].toUInt() : data["vbatt"].toUInt());
     seriesBrt->append(plotTime, data["lux"].toUInt());
-    if(plotTime > 100) axisX->setRange(plotTime - 100, plotTime);
+    if(plotTime > MAX_PLOT) axisX->setRange(plotTime - MAX_PLOT, plotTime);
 }
 void MainWindow::onMemRead() {
     bool ok;

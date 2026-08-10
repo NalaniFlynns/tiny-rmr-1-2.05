@@ -1,4 +1,4 @@
-#ifndef TEST_MAILBOX_H_
+﻿#ifndef TEST_MAILBOX_H_
 #define TEST_MAILBOX_H_
 #include <stdint.h>
 
@@ -84,6 +84,7 @@ typedef struct {
     uint8_t  _pad1[1];
     
     char     fw_version_str[16];
+    uint32_t vbatt_raw_mv;      /* 原始 ADC 电压(未滤波), 0xB0 */
 } Test_Mailbox_t;
 
 extern volatile Test_Mailbox_t g_test_box;

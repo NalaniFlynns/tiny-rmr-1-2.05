@@ -33,6 +33,7 @@ void test_mailbox_task(void) {
 
     /* ===== 实时监视器刷新(每 tick) ===== */
     g_test_box.vbatt_mv = g_vbatt_mv_filtered;
+    g_test_box.vbatt_raw_mv = g_vbatt_mv_raw;
     g_test_box.sys_state_mirror = sys_state;
     g_test_box.current_level = sys_memory.params & 0xFF;
     g_test_box.current_brt_val = g_current_brt; 
