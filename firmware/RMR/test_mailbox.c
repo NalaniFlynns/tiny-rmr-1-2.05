@@ -44,6 +44,7 @@ void test_mailbox_task(void) {
     g_test_box.est_i_avg_ua = (uint32_t)(((uint64_t)g_est_i_peak_ua * duty_mille) / 1000u);
     g_test_box.est_v_led_mv = sys_memory.v_led_fw;
     g_test_box.est_p_led_uw = (uint32_t)(((uint64_t)sys_memory.v_led_fw * g_test_box.est_i_avg_ua) / 1000ULL);
+    g_test_box.est_hw_power_uw = (uint32_t)(((uint64_t)g_vbatt_mv_raw * g_test_box.est_i_avg_ua) / 1000ULL);
     g_test_box.dyn_r_mohm = g_dyn_r_mohm;
     g_test_box.safe_brt_out = g_safe_brt_out;
     g_test_box.limit_i_led = g_limit_i_led;

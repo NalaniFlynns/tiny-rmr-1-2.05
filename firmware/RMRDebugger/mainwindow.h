@@ -155,12 +155,20 @@ private:
     QLabel *lblPassFail;
     QTableWidget *logTable;
 
-    QChart *chart;
+    QChart *chartVBatt;
+    QChart *chartLux;
+    QChart *chartPwmBrt;
     QLineSeries *seriesVBatt;
+    QLineSeries *seriesLux;
+    QLineSeries *seriesPwm;
     QLineSeries *seriesBrt;
-    QValueAxis *axisX;
-    QValueAxis *axisY1;
-    QValueAxis *axisY2;
+    QValueAxis *axisX1;
+    QValueAxis *axisX2;
+    QValueAxis *axisX3;
+    QValueAxis *axisYV;
+    QValueAxis *axisYL;
+    QValueAxis *axisYP;
+    void autoScaleAxis(QValueAxis *axis, QLineSeries *s1, QLineSeries *s2 = nullptr);
     int plotTime = 0;
 
     /* 本地 IPC 调试接口 (127.0.0.1:7345, JSON 行协议) */

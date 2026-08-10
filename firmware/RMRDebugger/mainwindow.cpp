@@ -416,11 +416,20 @@ void MainWindow::handleIpcCommand(QTcpSocket *s, const QJsonObject& cmd) {
     }
     if (c == "key") {
         int holdMs = cmd["holdMs"].toInt(spinKeyHoldMs->value());
-        bool plus = cmd["key"].toString() == "plus";
-        if (cmd.contains("tap")) plus = cmd["tap"].toInt() > 0;
-        uint32_t ofs = plus ? OFS_OVR_KEY_PLUS : OFS_OVR_KEY_MINUS;
-        enqueueToActive(Command(CmdType::WRITE_8, ofs, 1));
-        QTimer::singleShot(holdMs, this, [this, ofs](){ enqueueToActive(Command(CmdType::WRITE_8, ofs, 0)); });
+        QString k = cmd["key"].toString();
+        bool block = !cmd.contains("block") || cmd["block"].toBool();
+        bool plus = (k == "plus" || k == "both");
+        bool minus = (k == "minus" || k == "both");
+        if (cmd.contains("tap")) { plus = cmd["tap"].toInt() > 0; minus = false; }
+        auto release = [this, plus, minus, block]() {
+            if (plus) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
+            if (minus) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
+            if (block) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
+        };
+        if (block) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
+        if (plus) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
+        if (minus) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
+        if (holdMs > 0) QTimer::singleShot(holdMs, this, release);
         reply(true, "key queued");
         return;
     }
@@ -729,8 +738,8 @@ void MainWindow::setupUI() {
     lPoll->addWidget(spinPollMs);
     vMon->addLayout(lPoll);
 
-    QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(Filt)", "Lux(RAW)", "ALS Off", "Btn[-]", "Btn[+]", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags"};
-    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "als_off", "raw_k_m", "raw_k_p", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags"};
+    QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "HW P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(Filt)", "Lux(RAW)", "ALS Off", "Btn[-]", "Btn[+]", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags"};
+    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "p_hw", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "als_off", "raw_k_m", "raw_k_p", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags"};
     const int MON_COLS = 10;
     QGridLayout *gridMon = new QGridLayout();
     gridMon->setHorizontalSpacing(6);
@@ -770,24 +779,78 @@ void MainWindow::setupUI() {
 
     QHBoxLayout *lKey = new QHBoxLayout();
     lKey->addWidget(new QLabel("Software UI:"));
+    /* software keys: press = inject key + block physical keys; release = clear both */
     QPushButton *btnPlus = new QPushButton("[+]");
-    connect(btnPlus, &QPushButton::pressed, [this](){ enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1)); });
-    connect(btnPlus, &QPushButton::released, [this](){ enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0)); });
+    connect(btnPlus, &QPushButton::pressed, this, [this](){
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
+    });
+    connect(btnPlus, &QPushButton::released, this, [this](){
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
+        if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
+    });
     QPushButton *btnMinus = new QPushButton("[-]");
-    connect(btnMinus, &QPushButton::pressed, [this](){ enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1)); });
-    connect(btnMinus, &QPushButton::released, [this](){ enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0)); });
+    connect(btnMinus, &QPushButton::pressed, this, [this](){
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
+    });
+    connect(btnMinus, &QPushButton::released, this, [this](){
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
+        if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
+    });
+    QPushButton *btnBoth = new QPushButton("[+&-]");
+    btnBoth->setToolTip("Hold both: 1.5s = power on (OFF) / power off (RUN); 5s = toggle ALS <-> manual");
+    connect(btnBoth, &QPushButton::pressed, this, [this](){
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
+    });
+    connect(btnBoth, &QPushButton::released, this, [this](){
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
+        if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
+    });
+    lKey->addWidget(btnPlus); lKey->addWidget(btnMinus); lKey->addWidget(btnBoth);
     lKey->addWidget(new QLabel("Hold:"));
     spinKeyHoldMs = new QSpinBox();
     spinKeyHoldMs->setRange(100, 5000);
     spinKeyHoldMs->setValue(600);
     spinKeyHoldMs->setSuffix(" ms");
-    spinKeyHoldMs->setToolTip("短按持续时间(需 > 消抖20ms 且 < 1500ms 才识别为短按)。");
+    spinKeyHoldMs->setToolTip("Tap hold duration (debounce 20ms < tap < 1500ms).");
     lKey->addWidget(spinKeyHoldMs);
     QPushButton *btnTapPlus = new QPushButton("Tap [+]");
-    connect(btnTapPlus, &QPushButton::clicked, this, [this](){ int hold = spinKeyHoldMs->value(); enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1)); QTimer::singleShot(hold, this, [this](){ enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0)); }); });
+    connect(btnTapPlus, &QPushButton::clicked, this, [this](){
+        int hold = spinKeyHoldMs->value();
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
+        QTimer::singleShot(hold, this, [this](){
+            enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
+            if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
+        });
+    });
     QPushButton *btnTapMinus = new QPushButton("Tap [-]");
-    connect(btnTapMinus, &QPushButton::clicked, this, [this](){ int hold = spinKeyHoldMs->value(); enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1)); QTimer::singleShot(hold, this, [this](){ enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0)); }); });
-    lKey->addWidget(btnTapPlus); lKey->addWidget(btnTapMinus);
+    connect(btnTapMinus, &QPushButton::clicked, this, [this](){
+        int hold = spinKeyHoldMs->value();
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
+        QTimer::singleShot(hold, this, [this](){
+            enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
+            if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
+        });
+    });
+    QPushButton *btnTapBoth = new QPushButton("Tap [+&-]");
+    connect(btnTapBoth, &QPushButton::clicked, this, [this](){
+        int hold = spinKeyHoldMs->value();
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
+        QTimer::singleShot(hold, this, [this](){
+            enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
+            enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
+            if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
+        });
+    });
+    lKey->addWidget(btnTapPlus); lKey->addWidget(btnTapMinus); lKey->addWidget(btnTapBoth);
     QHBoxLayout *lPwr = new QHBoxLayout();
     QPushButton *btnPwrOn = new QPushButton("Power ON");
     btnPwrOn->setObjectName("BtnGreen");
@@ -869,39 +932,74 @@ void MainWindow::setupUI() {
     colsSplitter->addWidget(saCol3);
 
     // =============== 鏇茬嚎鍥?===============
-    chart = new QChart();
-    chart->legend()->show();
-    chart->legend()->setAlignment(Qt::AlignTop);
-    chart->layout()->setContentsMargins(0, 0, 0, 0);
+    /* ??????: ?? / ???? / PWM+BRT, Y ??????? */
+    auto makePlotChart = [&](const QString &title) {
+        QChart *ch = new QChart();
+        ch->setTitle(title);
+        ch->legend()->show();
+        ch->legend()->setAlignment(Qt::AlignTop);
+        ch->layout()->setContentsMargins(0, 0, 0, 0);
+        return ch;
+    };
+    auto makePlotView = [&](QChart *ch) {
+        QChartView *v = new QChartView(ch);
+        v->setRenderHint(QPainter::Antialiasing);
+        v->setStyleSheet("background: transparent; border: 1px solid #CCC; border-radius: 4px;");
+        v->setMinimumHeight(120);
+        return v;
+    };
 
+    chartVBatt = makePlotChart("V_Batt (mV)");
     seriesVBatt = new QLineSeries();
-    seriesVBatt->setName("V_Batt (mV)");
+    seriesVBatt->setName("V_Batt");
     QPen penVBatt(Qt::red); penVBatt.setWidth(2);
     seriesVBatt->setPen(penVBatt);
+    chartVBatt->addSeries(seriesVBatt);
+    axisX1 = new QValueAxis(); axisX1->setRange(0, 100); axisX1->setLabelFormat("%d");
+    axisYV = new QValueAxis(); axisYV->setRange(0, 4500); axisYV->setLabelFormat("%d");
+    chartVBatt->addAxis(axisX1, Qt::AlignBottom);
+    chartVBatt->addAxis(axisYV, Qt::AlignLeft);
+    seriesVBatt->attachAxis(axisX1); seriesVBatt->attachAxis(axisYV);
 
-    seriesBrt = new QLineSeries();
-    seriesBrt->setName("Lux");
+    chartLux = makePlotChart("Ambient Lux");
+    seriesLux = new QLineSeries();
+    seriesLux->setName("Lux");
     QPen penLux(Qt::blue); penLux.setWidth(2);
-    seriesBrt->setPen(penLux);
+    seriesLux->setPen(penLux);
+    chartLux->addSeries(seriesLux);
+    axisX2 = new QValueAxis(); axisX2->setRange(0, 100); axisX2->setLabelFormat("%d");
+    axisYL = new QValueAxis(); axisYL->setRange(0, 10000); axisYL->setLabelFormat("%d");
+    chartLux->addAxis(axisX2, Qt::AlignBottom);
+    chartLux->addAxis(axisYL, Qt::AlignLeft);
+    seriesLux->attachAxis(axisX2); seriesLux->attachAxis(axisYL);
 
-    chart->addSeries(seriesVBatt);
-    chart->addSeries(seriesBrt);
+    chartPwmBrt = makePlotChart("PWM & Brt");
+    seriesPwm = new QLineSeries();
+    seriesPwm->setName("PWM");
+    QPen penPwm(Qt::darkCyan); penPwm.setWidth(2);
+    seriesPwm->setPen(penPwm);
+    seriesBrt = new QLineSeries();
+    seriesBrt->setName("Brt");
+    QPen penBrt(Qt::magenta); penBrt.setWidth(2);
+    seriesBrt->setPen(penBrt);
+    chartPwmBrt->addSeries(seriesPwm);
+    chartPwmBrt->addSeries(seriesBrt);
+    axisX3 = new QValueAxis(); axisX3->setRange(0, 100); axisX3->setLabelFormat("%d");
+    axisYP = new QValueAxis(); axisYP->setRange(0, 2400); axisYP->setLabelFormat("%d");
+    chartPwmBrt->addAxis(axisX3, Qt::AlignBottom);
+    chartPwmBrt->addAxis(axisYP, Qt::AlignLeft);
+    seriesPwm->attachAxis(axisX3); seriesPwm->attachAxis(axisYP);
+    seriesBrt->attachAxis(axisX3); seriesBrt->attachAxis(axisYP);
 
-    axisX = new QValueAxis(); axisX->setRange(0, 100); axisX->setLabelFormat("%d");
-    axisY1 = new QValueAxis(); axisY1->setRange(1800, 4500); axisY1->setLinePenColor(Qt::red); axisY1->setLabelsColor(Qt::red);
-    axisY2 = new QValueAxis(); axisY2->setRange(0, 10000); axisY2->setLinePenColor(Qt::blue); axisY2->setLabelsColor(Qt::blue);
+    QWidget *chartPanel = new QWidget();
+    QHBoxLayout *hCharts = new QHBoxLayout(chartPanel);
+    hCharts->setContentsMargins(0, 0, 0, 0);
+    hCharts->setSpacing(6);
+    hCharts->addWidget(makePlotView(chartVBatt), 1);
+    hCharts->addWidget(makePlotView(chartLux), 1);
+    hCharts->addWidget(makePlotView(chartPwmBrt), 1);
 
-    chart->addAxis(axisX, Qt::AlignBottom);
-    chart->addAxis(axisY1, Qt::AlignLeft);
-    chart->addAxis(axisY2, Qt::AlignRight);
-    seriesVBatt->attachAxis(axisX); seriesVBatt->attachAxis(axisY1);
-    seriesBrt->attachAxis(axisX); seriesBrt->attachAxis(axisY2);
-
-    QChartView *chartView = new QChartView(chart);
-    chartView->setRenderHint(QPainter::Antialiasing);
-    chartView->setStyleSheet("background: transparent; border: 1px solid #CCC; border-radius: 4px;");
-    chartView->setMinimumHeight(110);
-    /* 固定高度遥测长条在最上方; 图表与下方两列放入可拖动分栏 testSplitter */
+    /* ????????????; ?????????????? testSplitter */
     QWidget *colsWidget = new QWidget();
     QVBoxLayout *vColsWrap = new QVBoxLayout(colsWidget);
     vColsWrap->setContentsMargins(0, 0, 0, 0);
@@ -909,11 +1007,11 @@ void MainWindow::setupUI() {
     testSplitter = new QSplitter(Qt::Vertical);
     testSplitter->setHandleWidth(8);
     testSplitter->setChildrenCollapsible(false);
-    testSplitter->addWidget(chartView);
+    testSplitter->addWidget(chartPanel);
     testSplitter->addWidget(colsWidget);
     testSplitter->setStretchFactor(0, 0);
     testSplitter->setStretchFactor(1, 1);
-    testSplitter->setSizes({170, 420});
+    testSplitter->setSizes({190, 400});
     vTestMain->addWidget(grpMon);
     vTestMain->addWidget(testSplitter, 1);
 
@@ -1350,7 +1448,7 @@ void MainWindow::onActiveProbeChanged() {
         w->enablePolling = (w->probeSN == activeSn && chkPoll->isChecked());
     }
     for (auto le : monVars.values()) le->setText("-");
-    seriesVBatt->clear(); seriesBrt->clear(); plotTime = 0;
+    seriesVBatt->clear(); seriesLux->clear(); seriesPwm->clear(); seriesBrt->clear(); plotTime = 0;
 
     if (activeWorkers.contains(activeSn)) {
         lblVer->setText("FW: " + probeFwVers.value(activeSn, "N/A"));
@@ -1590,6 +1688,7 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     monVars["pwm"]->setText(data["pwm"].toString());
 
     monVars["p_led"]->setText(QString::number(data["p_led"].toInt() / 1000.0, 'f', 1));
+    monVars["p_hw"]->setText(QString::number(data["p_hw"].toInt() / 1000.0, 'f', 3));
     monVars["i_avg"]->setText(QString::number(data["i_avg"].toInt() / 1000.0, 'f', 1));
     monVars["i_peak"]->setText(QString::number(data["i_peak"].toInt() / 1000.0, 'f', 1));
 
@@ -1625,14 +1724,43 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     monVars["flags"]->setText(flags.isEmpty() ? "None" : flags.trimmed());
 
     plotTime++;
-    /* 限制曲线点数, 防止长期运行无限增长导致卡死 */
+    /* limit points to avoid unbounded growth / freeze */
     const int MAX_PLOT = 400;
     if (seriesVBatt->count() >= MAX_PLOT) seriesVBatt->remove(0);
+    if (seriesLux->count() >= MAX_PLOT) seriesLux->remove(0);
+    if (seriesPwm->count() >= MAX_PLOT) seriesPwm->remove(0);
     if (seriesBrt->count() >= MAX_PLOT) seriesBrt->remove(0);
     seriesVBatt->append(plotTime, data.contains("vbatt_raw") ? data["vbatt_raw"].toUInt() : data["vbatt"].toUInt());
-    seriesBrt->append(plotTime, data["lux"].toUInt());
-    if(plotTime > MAX_PLOT) axisX->setRange(plotTime - MAX_PLOT, plotTime);
+    seriesLux->append(plotTime, data["lux"].toUInt());
+    seriesPwm->append(plotTime, data["pwm"].toUInt());
+    seriesBrt->append(plotTime, data["brt"].toUInt());
+    /* X ?????: ?????? MAX_PLOT ??? */
+    qreal xLo = qMax<qreal>(0, plotTime - MAX_PLOT);
+    axisX1->setRange(xLo, plotTime);
+    axisX2->setRange(xLo, plotTime);
+    axisX3->setRange(xLo, plotTime);
+    /* auto-scale Y axis by current window min/max + margin */
+    autoScaleAxis(axisYV, seriesVBatt);
+    autoScaleAxis(axisYL, seriesLux);
+    autoScaleAxis(axisYP, seriesPwm, seriesBrt);
 }
+void MainWindow::autoScaleAxis(QValueAxis *axis, QLineSeries *s1, QLineSeries *s2) {
+    if (!axis || !s1 || s1->count() == 0) return;
+    qreal mn = s1->at(0).y(), mx = mn;
+    auto scan = [&](QLineSeries *s) {
+        if (!s) return;
+        for (int i = 0; i < s->count(); ++i) {
+            qreal y = s->at(i).y();
+            if (y < mn) mn = y;
+            if (y > mx) mx = y;
+        }
+    };
+    scan(s1); scan(s2);
+    if (mx - mn < 1.0) { mn -= 1.0; mx += 1.0; }
+    qreal pad = (mx - mn) * 0.08 + 0.5;
+    axis->setRange(qMax<qreal>(0.0, mn - pad), mx + pad);
+}
+
 void MainWindow::onMemRead() {
     bool ok;
     uint32_t addr = txtMemAddr->text().toUInt(&ok, 16);

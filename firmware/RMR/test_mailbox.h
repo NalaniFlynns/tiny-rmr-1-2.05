@@ -85,6 +85,7 @@ typedef struct {
     
     char     fw_version_str[16];
     uint32_t vbatt_raw_mv;      /* 原始 ADC 电压(未滤波), 0xB0 */
+    uint32_t est_hw_power_uw;   /* hw power (batt side) = vbatt_raw x i_avg, 0xB4 */
 } Test_Mailbox_t;
 
 extern volatile Test_Mailbox_t g_test_box;

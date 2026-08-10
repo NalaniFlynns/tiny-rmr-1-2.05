@@ -133,7 +133,7 @@
 #define ALS_MAX_SLEW_RATE       20
 #define ALS_SLEW_LOW             2
 #define ALS_SLEW_MID             5
-#define ALS_MIN_BRT             50
+#define ALS_MIN_BRT             30
 #define ALS_SQRT_FACTOR         5
 #define ALS_CAP_BRT_LOW_LUX     600
 #define ALS_CAP_BRT_HIGH_LUX    800

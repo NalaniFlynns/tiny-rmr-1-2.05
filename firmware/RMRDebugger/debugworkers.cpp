@@ -231,6 +231,7 @@ void BaseWorker::pollTelemetryGeneric() {
     map["status"] = *(uint32_t*)(data + OFS_STATUS);
     map["vbatt"] = *(uint32_t*)(data + OFS_VBATT_MV);
     map["vbatt_raw"] = *(uint32_t*)(data + OFS_VBATT_RAW_MV);
+    map["p_hw"] = *(uint32_t*)(data + OFS_HW_POWER_UW);
     map["dyn_r"] = *(uint32_t*)(data + OFS_DYN_R_MOHM);
     map["level"] = *(uint16_t*)(data + OFS_CURRENT_LVL);
     map["brt"] = *(uint16_t*)(data + OFS_CURRENT_BRT);
