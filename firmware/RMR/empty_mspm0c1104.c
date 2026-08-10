@@ -1,4 +1,4 @@
-﻿#include "app_config.h"
+#include "app_config.h"
 #include "hal_keys.h"
 #include "hal_opt3001.h"
 #include "sys_battery.h"
@@ -30,6 +30,36 @@ bool g_flash_mode_used __attribute__((section(".noinit")));
 #endif
 
 volatile uint32_t g_tick_ms = 0;
+
+/* 1ms ????: MSPM0C1103/1104 ??? SysTick(TI E2E ??, ???????? 0),
+   ????? GPTIMER14 ?????????????????? >1ms(????),
+   ?????????????"??"??(?? 5s ????/1.5s ??/LVP/ALS ???)???? */
+static void tick_timer_init(void) {
+    const DL_TimerG_ClockConfig tickClockConfig = {
+        .clockSel = DL_TIMER_CLOCK_BUSCLK,
+        .divideRatio = DL_TIMER_CLOCK_DIVIDE_1,
+        .prescale = 0U
+    };
+    const DL_TimerG_TimerConfig tickTimerConfig = {
+        .timerMode = DL_TIMER_TIMER_MODE_PERIODIC_UP,
+        .period = CPUCLK_FREQ / 1000u - 1u,   /* 24MHz BUSCLK -> 1ms */
+        .startTimer = DL_TIMER_STOP,
+        .genIntermInt = DL_TIMER_INTERM_INT_DISABLED,
+        .counterVal = 0U
+    };
+    DL_TimerG_enablePower(TIMG14);
+    delay_cycles(POWER_STARTUP_DELAY);
+    DL_TimerG_setClockConfig(TIMG14, (DL_TimerG_ClockConfig *) &tickClockConfig);
+    DL_TimerG_initTimerMode(TIMG14, (DL_TimerG_TimerConfig *) &tickTimerConfig);
+    DL_TimerG_enableInterrupt(TIMG14, DL_TIMER_INTERRUPT_ZERO_EVENT);
+    NVIC_EnableIRQ(TIMG14_INT_IRQn);
+    DL_TimerG_startCounter(TIMG14);
+}
+
+void TIMG14_IRQHandler(void) {
+    DL_TimerG_clearInterruptStatus(TIMG14, DL_TIMER_INTERRUPT_ZERO_EVENT);
+    g_tick_ms++;
+}
 volatile uint32_t g_inactivity_sec = 0;
 volatile bool g_is_dimmed = false;
 
@@ -72,6 +102,8 @@ static void update_debug_string(void) {
 int main(void) {
     SYSCFG_DL_init();
     __enable_irq();
+
+    tick_timer_init();  /* GPTIMER14 1ms 硬件时基 (MSPM0C1104 无硬件 SysTick) */
     
     if (g_por_magic != POR_MAGIC) {
         g_por_magic = POR_MAGIC;
@@ -106,7 +138,6 @@ int main(void) {
 
     while (1) {
         delay_cycles(CPU_CYCLES_PER_MS);
-        g_tick_ms++;
 
         DL_WWDT_restart(WWDT0_INST);
 
