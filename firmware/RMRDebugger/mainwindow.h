@@ -149,7 +149,10 @@ private:
 
     QComboBox *cmbLedMode;
     QSpinBox *spinPollMs;
-    QSpinBox *spinKeyHoldMs;
+    QElapsedTimer keyClockPlus, keyClockMinus, keyClockBoth;
+    QPushButton *btnKeyPlus = nullptr, *btnKeyMinus = nullptr, *btnKeyBoth = nullptr;
+    bool keyPlusHeld = false, keyMinusHeld = false, keyBothHeld = false;
+    QTimer *keyUiTimer = nullptr;
     QSpinBox *spinLed;
     QCheckBox *chkBlockPhysKeys;
 

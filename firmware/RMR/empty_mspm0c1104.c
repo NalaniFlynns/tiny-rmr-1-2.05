@@ -271,16 +271,18 @@ int main(void) {
                 led_set_target(g_test_box.ovr_brt_val, false);
             } else {
 #if FEATURE_ALS_MODE
-                if (g_test_box.ovr_als_en) {
-                    mode_task();   /* ALS 注入 */
+                if (g_test_box.ovr_als_en || g_is_als_mode) {
+                    mode_task();   /* ALS 注入/真实 ALS 模式: 按键偏移后立即重算亮度 */
                 } else
 #endif
                 {
-                    led_set_target(battery_get_safe_brt(g_test_box.ovr_brt_val), false);
+                    uint8_t lvl = sys_memory.params & 0xFF;
+                    led_set_target(battery_get_safe_brt(CFG_BRT_MAP[lvl]), false);   /* 手动模式: 挡位亮度, 与真实按键一致 */
                 }
             }
-            /* 测试态响应模拟单键(短按), 验证档位/偏移调整逻辑 */
-            if (key == EVT_BT1_SHORT || key == EVT_BT1_SHORT_0_8S || key == EVT_BT2_SHORT) {
+            /* 测试态响应模拟键: 短按调挡位/偏移 + 5s 长按切换 ALS<->手动, 与真实按键一致 */
+            if (key == EVT_BT1_SHORT || key == EVT_BT1_SHORT_0_8S || key == EVT_BT2_SHORT ||
+                key == EVT_BOTH_LONG_5S) {
                 mode_handle_key(key);
             }
         }

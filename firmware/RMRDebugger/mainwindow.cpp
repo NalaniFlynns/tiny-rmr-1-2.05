@@ -1,4 +1,6 @@
 ﻿#include "MainWindow.h"
+#include <QApplication>
+#include <windows.h>
     int prmMax[] = {9999, 999999, 5000, 100000, 99999999, 1000, 5000, 5000, 8, 20, 20, 20};
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -424,7 +426,7 @@ void MainWindow::handleIpcCommand(QTcpSocket *s, const QJsonObject& cmd) {
         return;
     }
     if (c == "key") {
-        int holdMs = cmd["holdMs"].toInt(spinKeyHoldMs->value());
+        int holdMs = cmd.contains("holdMs") ? cmd["holdMs"].toInt() : 400;
         QString k = cmd["key"].toString();
         bool block = !cmd.contains("block") || cmd["block"].toBool();
         bool plus = (k == "plus" || k == "both");
@@ -747,8 +749,8 @@ void MainWindow::setupUI() {
     lPoll->addWidget(spinPollMs);
     vMon->addLayout(lPoll);
 
-    QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "HW P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(Filt)", "Lux(RAW)", "ALS Off", "Btn[-]", "Btn[+]", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags", "Params"};
-    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "p_hw", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "als_off", "raw_k_m", "raw_k_p", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags", "cfg_params"};
+    QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "HW P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(Filt)", "Lux(RAW)", "ALS Off", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags", "Params"};
+    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "p_hw", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "als_off", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags", "cfg_params"};
     const int MON_COLS = 10;
     QGridLayout *gridMon = new QGridLayout();
     gridMon->setHorizontalSpacing(6);
@@ -787,83 +789,119 @@ void MainWindow::setupUI() {
     vOvr->addWidget(chkBlockPhysKeys);
 
     QHBoxLayout *lKey = new QHBoxLayout();
-    lKey->addWidget(new QLabel("Software UI:"));
-    /* software keys: press = inject key + block physical keys; release = clear both */
-    QPushButton *btnPlus = new QPushButton("[+]");
-    connect(btnPlus, &QPushButton::pressed, this, [this](){
-        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
-        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
-    });
-    connect(btnPlus, &QPushButton::released, this, [this](){
-        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
-        if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
-    });
-    QPushButton *btnMinus = new QPushButton("[-]");
-    connect(btnMinus, &QPushButton::pressed, this, [this](){
-        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
-        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
-    });
-    connect(btnMinus, &QPushButton::released, this, [this](){
-        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
-        if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
-    });
-    QPushButton *btnBoth = new QPushButton("[+&&-]");
-    btnBoth->setToolTip("Hold both: 1.5s = power on (OFF) / power off (RUN); 5s = toggle ALS <-> manual");
-    connect(btnBoth, &QPushButton::pressed, this, [this](){
-        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
-        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
-        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
-    });
-    connect(btnBoth, &QPushButton::released, this, [this](){
-        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
-        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
-        if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
-    });
-    lKey->addWidget(btnPlus); lKey->addWidget(btnMinus); lKey->addWidget(btnBoth);
-    spinKeyHoldMs = new QSpinBox();
-    spinKeyHoldMs->setRange(100, 5000);
-    spinKeyHoldMs->setValue(600);
-    spinKeyHoldMs->setSuffix(" ms");
-    spinKeyHoldMs->setToolTip("Tap hold duration (debounce 20ms < tap < 1500ms).");
+    lKey->addWidget(new QLabel("Key Status & Control:"));
+    /* 状态与操作合并显示: 操作按钮即状态指示器。
+       按住=注入按下(同时拦截物理键), 松开=真正松开(解除拦截); 按下时长=实际按住时长, 按钮实时刷新秒数;
+       快速点击<120ms 补足到最短有效时长(等效真实按键去抖, 防止 SWD 写队列延迟吞掉短按);
+       物理键按下且未注入时按钮显示 PHY(琥珀底), 注入按住显示 PRESSED(红底) */
+    const int MIN_HOLD_MS = 120;
+    auto pressUi = [](QPushButton *b, const QString &txt){ b->setText(txt); b->setStyleSheet("background:#C00000; color:#FFFFFF; font-weight:bold; border:1px solid #800000;"); };
+    auto releaseUi = [](QPushButton *b, const QString &txt){ b->setText(txt); b->setStyleSheet(""); };
+    keyUiTimer = new QTimer(this);
+    keyUiTimer->setInterval(100);
+    auto startUiTimer = [this](){ if (!keyUiTimer->isActive()) keyUiTimer->start(); };
+    auto stopUiTimer = [this](){ if (!keyPlusHeld && !keyMinusHeld && !keyBothHeld) keyUiTimer->stop(); };
+    /* 虚拟按键注入仅在固件 TEST 态生效: 非 TEST 态先自动解锁, 保证按下即有响应 */
+    auto ensureTestMode = [this](){
+        const QVariantMap &t = lastTelemetry.value(cmbActiveProbe->currentData().toUInt());
+        if (t.isEmpty() || t["state"].toInt() != 4) {
+            enqueueToActive(Command(CmdType::ENTER_TEST));
+            enqueueToActive(Command(CmdType::READ_CFG));
+        }
+    };
 
-    QPushButton *btnTapPlus = new QPushButton("Tap [+]");
-    connect(btnTapPlus, &QPushButton::clicked, this, [this](){
-        int hold = spinKeyHoldMs->value();
+    btnKeyPlus = new QPushButton("[+]");
+    btnKeyPlus->setToolTip(u8"按住=+键按下(拦截物理键), 松开=松开; 短按调挡/偏移; 按钮实时显示按住时长与 PHY/OVR 状态");
+    auto releasePlus = [this, releaseUi, stopUiTimer](){
+        keyPlusHeld = false;
+        if (btnKeyPlus) releaseUi(btnKeyPlus, "[+]");
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
+        if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
+        stopUiTimer();
+    };
+    connect(btnKeyPlus, &QPushButton::pressed, this, [this, pressUi, startUiTimer, ensureTestMode](){
+        keyPlusHeld = true;
+        ensureTestMode();
+        keyClockPlus.restart();
+        pressUi(btnKeyPlus, "[+] PRESSED 0.0s");
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
-        QTimer::singleShot(hold, this, [this](){
-            enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
-            if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
-        });
+        startUiTimer();
     });
-    QPushButton *btnTapMinus = new QPushButton("Tap [-]");
-    connect(btnTapMinus, &QPushButton::clicked, this, [this](){
-        int hold = spinKeyHoldMs->value();
+    connect(btnKeyPlus, &QPushButton::released, this, [this, releasePlus](){
+        qint64 held = keyClockPlus.elapsed();
+        if (held < MIN_HOLD_MS) QTimer::singleShot(MIN_HOLD_MS - held, this, [this, releasePlus](){ if (!keyPlusHeld) releasePlus(); });
+        else releasePlus();
+    });
+
+    btnKeyMinus = new QPushButton("[-]");
+    btnKeyMinus->setToolTip(u8"按住=-键按下(拦截物理键), 松开=松开; 短按调挡/偏移; 按钮实时显示按住时长与 PHY/OVR 状态");
+    auto releaseMinus = [this, releaseUi, stopUiTimer](){
+        keyMinusHeld = false;
+        if (btnKeyMinus) releaseUi(btnKeyMinus, "[-]");
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
+        if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
+        stopUiTimer();
+    };
+    connect(btnKeyMinus, &QPushButton::pressed, this, [this, pressUi, startUiTimer, ensureTestMode](){
+        keyMinusHeld = true;
+        ensureTestMode();
+        keyClockMinus.restart();
+        pressUi(btnKeyMinus, "[-] PRESSED 0.0s");
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
-        QTimer::singleShot(hold, this, [this](){
-            enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
-            if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
-        });
+        startUiTimer();
     });
-    QPushButton *btnTapBoth = new QPushButton("Tap [+&&-]");
-    connect(btnTapBoth, &QPushButton::clicked, this, [this](){
-        int hold = spinKeyHoldMs->value();
+    connect(btnKeyMinus, &QPushButton::released, this, [this, releaseMinus](){
+        qint64 held = keyClockMinus.elapsed();
+        if (held < MIN_HOLD_MS) QTimer::singleShot(MIN_HOLD_MS - held, this, [this, releaseMinus](){ if (!keyMinusHeld) releaseMinus(); });
+        else releaseMinus();
+    });
+
+    btnKeyBoth = new QPushButton("[+&&-]");
+    btnKeyBoth->setToolTip(u8"双键: 按住约 5s(固件 tick, 接调试器时约 9s 墙钟)切换 ALS<->手动; 1.5s=关机/开机(RUN); 松开才真正松开");
+    auto releaseBoth = [this, releaseUi, stopUiTimer](){
+        keyBothHeld = false;
+        if (btnKeyBoth) releaseUi(btnKeyBoth, "[+&&-]");
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
+        enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
+        if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
+        stopUiTimer();
+    };
+    connect(btnKeyBoth, &QPushButton::pressed, this, [this, pressUi, startUiTimer, ensureTestMode](){
+        keyBothHeld = true;
+        ensureTestMode();
+        keyClockBoth.restart();
+        pressUi(btnKeyBoth, "[+&&-] PRESSED 0.0s");
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1));
-        QTimer::singleShot(hold, this, [this](){
-            enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
-            enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
-            if (!chkBlockPhysKeys->isChecked()) enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
-        });
+        startUiTimer();
     });
+    connect(btnKeyBoth, &QPushButton::released, this, [this, releaseBoth](){
+        qint64 held = keyClockBoth.elapsed();
+        if (held < MIN_HOLD_MS) QTimer::singleShot(MIN_HOLD_MS - held, this, [this, releaseBoth](){ if (!keyBothHeld) releaseBoth(); });
+        else releaseBoth();
+    });
+    /* 实时刷新按住秒数 + 松开丢失看门狗:
+       若按钮仍标记按住但鼠标左键已不在按下状态(松开事件丢失/窗口失焦), 强制真正松开, 防止
+       虚拟键在固件侧持续注入导致误触发 5s 双键事件 */
+    connect(keyUiTimer, &QTimer::timeout, this, [this, releasePlus, releaseMinus, releaseBoth](){
+        /* 用系统物理鼠标状态而非 Qt 内部状态: 松开事件丢失(窗口失焦/外部注入)时 Qt 会一直认为左键按下,
+           GetAsyncKeyState 反映真实物理按键, 保证看门狗可靠释放 */
+        const bool leftDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        if (keyPlusHeld && !leftDown) releasePlus();
+        if (keyMinusHeld && !leftDown) releaseMinus();
+        if (keyBothHeld && !leftDown) releaseBoth();
+        auto heldText = [](const QString &label, const QElapsedTimer &clk){
+            return QString("%1 PRESSED %2s").arg(label).arg(clk.elapsed() / 1000.0, 0, 'f', 1);
+        };
+        if (keyPlusHeld && btnKeyPlus) btnKeyPlus->setText(heldText("[+]", keyClockPlus));
+        if (keyMinusHeld && btnKeyMinus) btnKeyMinus->setText(heldText("[-]", keyClockMinus));
+        if (keyBothHeld && btnKeyBoth) btnKeyBoth->setText(heldText("[+&&-]", keyClockBoth));
+    });
+    lKey->addWidget(btnKeyPlus); lKey->addWidget(btnKeyMinus); lKey->addWidget(btnKeyBoth);
     vOvr->addLayout(lKey);
-    QHBoxLayout *lTap = new QHBoxLayout();
-    lTap->addWidget(new QLabel("Hold:"));
-    lTap->addWidget(spinKeyHoldMs);
-    lTap->addWidget(btnTapPlus); lTap->addWidget(btnTapMinus); lTap->addWidget(btnTapBoth);
-    vOvr->addLayout(lTap);
     QHBoxLayout *lPwr = new QHBoxLayout();
     QPushButton *btnPwrOn = new QPushButton("Power ON");
     btnPwrOn->setObjectName("BtnGreen");
@@ -1460,6 +1498,13 @@ void MainWindow::onActiveProbeChanged() {
     for (auto w : activeWorkers) {
         w->enablePolling = (w->probeSN == activeSn && chkPoll->isChecked());
     }
+    /* 连接/切换探针时清空上次会话残留的调试覆盖(虚拟键/亮度注入/物理键拦截),
+       防止残留 ovr 位在固件侧被当作持续按住, 误触发 5s 双键模式切换 */
+    enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
+    enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
+    enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0));
+    enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_ALS_EN, 0));
+    enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_LED_MODE, 0));
     for (auto le : monVars.values()) le->setText("-");
     seriesVBatt->clear(); seriesLux->clear(); seriesPwm->clear(); seriesBrt->clear(); plotClock.restart();
 
@@ -1685,7 +1730,10 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     int st = data["state"].toInt();
     int sen = data["sensor"].toInt();
 
-    monVars["state"]->setText(st >= 0 && st < states.size() ? states[st] : "Unk");
+    QString stText = (st >= 0 && st < states.size()) ? states[st] : "Unk";
+    if ((st == 1 || st == 4) && data.contains("cfg_params"))   /* RUN/TEST: 显示 ALS 或手动 */
+        stText += ((data["cfg_params"].toUInt() >> 8) & 1u) ? " ALS" : " MAN";
+    monVars["state"]->setText(stText);
     /* 电压显示原始 ADC 值(不滤波/不平滑); 旧固件无 vbatt_raw 时回退 vbatt */
     monVars["vbatt"]->setText(data.contains("vbatt_raw") ? data["vbatt_raw"].toString() : data["vbatt"].toString());
     monVars["dyn_r"]->setText(QString::number(data["dyn_r"].toInt() / 1000.0, 'f', 1));
@@ -1721,8 +1769,28 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     monVars["lux_raw"]->setText(data["lux_raw"].toString());
     monVars["als_off"]->setText(QString::number((data["cfg_params"].toUInt() >> 16) & 0xFF));
 
-    monVars["raw_k_m"]->setText(data["raw_k_m"].toInt() ? "Released" : "PRESSED");
-    monVars["raw_k_p"]->setText(data["raw_k_p"].toInt() ? "Released" : "PRESSED");
+    /* 键状态合并显示到操作按钮: 注入按住=红底 PRESSED+秒数, 注入未按住=OVR, 物理按下=琥珀底 PHY, 均无=默认
+       (raw=1 表示物理按下, 由固件 mailbox 实时同步) */
+    auto keyBtnUi = [this](QPushButton *b, const QString &label, int ovr, int raw, const QElapsedTimer &clk, bool held){
+        if (!b) return;
+        if (held) {
+            b->setText(QString("%1 PRESSED %2s").arg(label).arg(clk.elapsed() / 1000.0, 0, 'f', 1));
+            b->setStyleSheet("background:#C00000; color:#FFFFFF; font-weight:bold; border:1px solid #800000;");
+        } else if (ovr) {
+            b->setText(label + " OVR");
+            b->setStyleSheet("background:#C00000; color:#FFFFFF; font-weight:bold; border:1px solid #800000;");
+        } else if (raw) {
+            b->setText(label + " PHY");
+            b->setStyleSheet("background:#E67E22; color:#FFFFFF; font-weight:bold; border:1px solid #B85C0E;");
+        } else {
+            b->setText(label);
+            b->setStyleSheet("");
+        }
+    };
+    keyBtnUi(btnKeyMinus, "[-]", data["ovr_k_m"].toInt(), data["raw_k_m"].toInt(), keyClockMinus, keyMinusHeld);
+    keyBtnUi(btnKeyPlus, "[+]", data["ovr_k_p"].toInt(), data["raw_k_p"].toInt(), keyClockPlus, keyPlusHeld);
+    keyBtnUi(btnKeyBoth, "[+&&-]", data["ovr_k_m"].toInt() | data["ovr_k_p"].toInt(),
+             data["raw_k_m"].toInt() & data["raw_k_p"].toInt(), keyClockBoth, keyBothHeld);
 
     monVars["nvm_dirty"]->setText(data["f_dirty"].toInt() ? "DIRTY" : "Clean");
     monVars["nvm_fail"]->setText(data["nvm_fail"].toString());
