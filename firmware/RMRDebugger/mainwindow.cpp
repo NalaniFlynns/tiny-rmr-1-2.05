@@ -1689,7 +1689,12 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     monVars["pwm"]->setText(data["pwm"].toString());
 
     monVars["p_led"]->setText(QString::number(data["p_led"].toInt() / 1000.0, 'f', 1));
-    monVars["p_hw"]->setText(QString::number(data["p_hw"].toInt() / 1000.0, 'f', 3));
+    /* hardware power: mW with 3 decimals, derived from current PWM;
+       power reserve % = current duty (pwm 1199/2399 -> 50%) */
+    double pwrMw = data["p_hw"].toInt() / 1000.0;
+    uint32_t pwmRaw = data["pwm"].toUInt();
+    double pwrPct = (pwmRaw >= 2399) ? 0.0 : (2399 - pwmRaw) / 2399.0 * 100.0;
+    monVars["p_hw"]->setText(QString::number(pwrMw, 'f', 3) + " mW (" + QString::number(pwrPct, 'f', 1) + "%)");
     monVars["i_avg"]->setText(QString::number(data["i_avg"].toInt() / 1000.0, 'f', 1));
     monVars["i_peak"]->setText(QString::number(data["i_peak"].toInt() / 1000.0, 'f', 1));
 
