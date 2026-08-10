@@ -126,7 +126,7 @@
 #define BATT_MAX_DISCHARGE_UW   9000
 #define LOW_BRT_GUARANTEE       30
 #define HW_LED_FORWARD_V_MV     2200
-#define HW_LED_MAX_CURRENT_UA   30000
+#define HW_LED_MAX_CURRENT_UA   2800
 #define HW_SERIES_R_MOHM        360000
 
 /* ==================== [6] 自动感光配置 ==================== */
