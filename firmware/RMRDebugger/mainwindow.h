@@ -16,6 +16,7 @@
 #include <QTextEdit>
 #include <QResizeEvent>
 #include <QCloseEvent>
+#include <QElapsedTimer>
 #include <QSplitter>
 #include <QDialog>
 #include <QVBoxLayout>
@@ -169,7 +170,7 @@ private:
     QValueAxis *axisYL;
     QValueAxis *axisYP;
     void autoScaleAxis(QValueAxis *axis, QLineSeries *s1, QLineSeries *s2 = nullptr);
-    int plotTime = 0;
+    QElapsedTimer plotClock;
 
     /* 本地 IPC 调试接口 (127.0.0.1:7345, JSON 行协议) */
     QTcpServer *ipcServer = nullptr;

@@ -60,6 +60,7 @@ void GlobalJLinkLogHandler(const char* s) {
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     g_mainWindowContext = this;
+    plotClock.start();
     setWindowTitle("RMR Factory Programmer");
     setWindowIcon(QIcon(":/logo.ico"));
     setMinimumSize(1180, 780);
@@ -1448,7 +1449,7 @@ void MainWindow::onActiveProbeChanged() {
         w->enablePolling = (w->probeSN == activeSn && chkPoll->isChecked());
     }
     for (auto le : monVars.values()) le->setText("-");
-    seriesVBatt->clear(); seriesLux->clear(); seriesPwm->clear(); seriesBrt->clear(); plotTime = 0;
+    seriesVBatt->clear(); seriesLux->clear(); seriesPwm->clear(); seriesBrt->clear(); plotClock.restart();
 
     if (activeWorkers.contains(activeSn)) {
         lblVer->setText("FW: " + probeFwVers.value(activeSn, "N/A"));
@@ -1723,23 +1724,23 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     if (data["f_dirty"].toInt()) flags += "[NVM_DIRTY] ";
     monVars["flags"]->setText(flags.isEmpty() ? "None" : flags.trimmed());
 
-    plotTime++;
-    /* limit points to avoid unbounded growth / freeze */
-    const int MAX_PLOT = 400;
-    if (seriesVBatt->count() >= MAX_PLOT) seriesVBatt->remove(0);
-    if (seriesLux->count() >= MAX_PLOT) seriesLux->remove(0);
-    if (seriesPwm->count() >= MAX_PLOT) seriesPwm->remove(0);
-    if (seriesBrt->count() >= MAX_PLOT) seriesBrt->remove(0);
-    seriesVBatt->append(plotTime, data.contains("vbatt_raw") ? data["vbatt_raw"].toUInt() : data["vbatt"].toUInt());
-    seriesLux->append(plotTime, data["lux"].toUInt());
-    seriesPwm->append(plotTime, data["pwm"].toUInt());
-    seriesBrt->append(plotTime, data["brt"].toUInt());
-    /* X ?????: ?????? MAX_PLOT ??? */
-    qreal xLo = qMax<qreal>(0, plotTime - MAX_PLOT);
-    axisX1->setRange(xLo, plotTime);
-    axisX2->setRange(xLo, plotTime);
-    axisX3->setRange(xLo, plotTime);
-    /* auto-scale Y axis by current window min/max + margin */
+    /* fixed 10s time window: X = monotonic clock seconds, show only last 10s */
+    const qreal WINDOW_S = 10.0;
+    const qreal KEEP_S = 15.0;
+    qreal xNow = plotClock.elapsed() / 1000.0;
+    seriesVBatt->append(xNow, data.contains("vbatt_raw") ? data["vbatt_raw"].toUInt() : data["vbatt"].toUInt());
+    seriesLux->append(xNow, data["lux"].toUInt());
+    seriesPwm->append(xNow, data["pwm"].toUInt());
+    seriesBrt->append(xNow, data["brt"].toUInt());
+    auto trim = [&](QLineSeries *s) {
+        while (s->count() && s->at(0).x() < xNow - KEEP_S) s->remove(0);
+    };
+    trim(seriesVBatt); trim(seriesLux); trim(seriesPwm); trim(seriesBrt);
+    qreal xLo = qMax<qreal>(0, xNow - WINDOW_S);
+    axisX1->setRange(xLo, xNow);
+    axisX2->setRange(xLo, xNow);
+    axisX3->setRange(xLo, xNow);
+    /* Y axis auto-scale by current window min/max + margin */
     autoScaleAxis(axisYV, seriesVBatt);
     autoScaleAxis(axisYL, seriesLux);
     autoScaleAxis(axisYP, seriesPwm, seriesBrt);
