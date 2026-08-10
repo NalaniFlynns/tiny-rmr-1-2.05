@@ -20,6 +20,7 @@
 #include <QTimer>
 #include <QIcon>
 #include <QSet>
+#include <QSettings>
 #include <QSerialPortInfo>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -74,6 +75,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     autoScanTimer->start(2000);
 
     QTimer::singleShot(500, this, [this](){ scanProbes(false); });
+    /* 窗口显示并完成首次布局后再恢复分栏比例, 避免被初始布局覆盖 */
+    QTimer::singleShot(0, this, &MainWindow::restoreLayoutState);
 }
 
 MainWindow::~MainWindow() {
@@ -91,6 +94,74 @@ MainWindow::~MainWindow() {
 void MainWindow::resizeEvent(QResizeEvent *event) {
     QMainWindow::resizeEvent(event);
     /* 固定字号与内边距：不再随窗口缩放，避免元素被压缩 (设计基准 1450x950) */
+    applyPendingRatios();
+}
+
+void MainWindow::saveLayoutState() {
+    QSettings s("RMR", "RMRDebugger");
+    s.setValue("window/geometry", saveGeometry());
+    /* 保存各分栏的归一化比例, 不依赖页签可见性/绝对像素 */
+    auto saveSplit = [&](const char* key, QSplitter* sp){
+        if (!sp) return;
+        QVariantList vl;
+        if (pendingRatios.contains(sp)) {
+            for (double r : pendingRatios.value(sp)) vl.append(r);
+        } else {
+            QList<int> sz = sp->sizes();
+            int total = 0;
+            for (int v : sz) total += v;
+            if (total <= 0) return;
+            for (int v : sz) vl.append(qreal(v) / qreal(total));
+        }
+        s.setValue(key, vl);
+    };
+    saveSplit("layout/global", globalSplitter);
+    saveSplit("layout/right", rightSplitter);
+    saveSplit("layout/test", testSplitter);
+    saveSplit("layout/cols", colsSplitter);
+}
+
+void MainWindow::applyPendingRatios() {
+    for (auto it = pendingRatios.begin(); it != pendingRatios.end(); ) {
+        QSplitter* sp = it.key();
+        const QList<double>& ratios = it.value();
+        if (sp && sp->isVisible() && sp->width() > 0) {
+            int total = (sp->orientation() == Qt::Horizontal) ? sp->width() : sp->height();
+            if (total > 0) {
+                QList<int> sizes;
+                for (double r : ratios) sizes.append(qRound(r * total));
+                sp->setSizes(sizes);
+                it = pendingRatios.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+}
+
+void MainWindow::restoreLayoutState() {
+    QSettings s("RMR", "RMRDebugger");
+    QByteArray geo = s.value("window/geometry").toByteArray();
+    if (!geo.isEmpty()) restoreGeometry(geo);
+    pendingRatios.clear();
+    auto restoreSplit = [&](const char* key, QSplitter* sp) {
+        if (!sp) return;
+        QVariantList vl = s.value(key).toList();
+        if (vl.size() != sp->count() || vl.isEmpty()) return;
+        QList<double> ratios;
+        for (auto v : vl) ratios.append(v.toDouble());
+        pendingRatios[sp] = ratios;
+    };
+    restoreSplit("layout/global", globalSplitter);
+    restoreSplit("layout/right", rightSplitter);
+    restoreSplit("layout/test", testSplitter);
+    restoreSplit("layout/cols", colsSplitter);
+    applyPendingRatios();
+}
+
+void MainWindow::closeEvent(QCloseEvent *event) {
+    saveLayoutState();
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::applyTheme() {
@@ -233,6 +304,56 @@ void MainWindow::handleIpcCommand(QTcpSocket *s, const QJsonObject& cmd) {
 
     if (c == "ping") { reply(true, "pong"); return; }
     if (c == "state") { ipcSendHello(s); return; }
+    if (c == "layout") {
+        auto sizesToJson = [](QSplitter* sp){
+            QJsonArray arr;
+            if (sp) for (int sz : sp->sizes()) arr.append(sz);
+            return arr;
+        };
+        QJsonObject sizes;
+        sizes["global"] = sizesToJson(globalSplitter);
+        sizes["right"] = sizesToJson(rightSplitter);
+        sizes["test"] = sizesToJson(testSplitter);
+        sizes["cols"] = sizesToJson(colsSplitter);
+        if (cmd.contains("set")) {
+            QJsonObject set = cmd["set"].toObject();
+            auto applySplit = [&](const char* name, QSplitter* sp){
+                if (!sp || !set.contains(name)) return;
+                QJsonArray arr = set[name].toArray();
+                int totalPx = 0;
+                for (auto v : arr) totalPx += v.toInt();
+                if (totalPx <= 0) return;
+                QList<double> ratios;
+                for (auto v : arr) ratios.append(v.toInt() / (double)totalPx);
+                if (ratios.size() != sp->count()) return;
+                pendingRatios[sp] = ratios;
+                if (sp->isVisible() && sp->width() > 0) {
+                    int total = (sp->orientation() == Qt::Horizontal) ? sp->width() : sp->height();
+                    QList<int> sizesList;
+                    for (double r : ratios) sizesList.append(qRound(r * total));
+                    sp->setSizes(sizesList);
+                }
+            };
+            applySplit("global", globalSplitter);
+            applySplit("right", rightSplitter);
+            applySplit("test", testSplitter);
+            applySplit("cols", colsSplitter);
+            reply(true, "layout applied");
+            /* 等 splitter 完成重排后再保存与回读, 避免存到旧值 */
+            QTimer::singleShot(150, this, [this, s](){
+                saveLayoutState();
+                QJsonObject s2;
+                s2["global"] = [this](){ QJsonArray a; if (globalSplitter) for (int v : globalSplitter->sizes()) a.append(v); return a; }();
+                s2["right"]  = [this](){ QJsonArray a; if (rightSplitter)  for (int v : rightSplitter->sizes())  a.append(v); return a; }();
+                s2["test"]   = [this](){ QJsonArray a; if (testSplitter)   for (int v : testSplitter->sizes())   a.append(v); return a; }();
+                s2["cols"]   = [this](){ QJsonArray a; if (colsSplitter)   for (int v : colsSplitter->sizes())   a.append(v); return a; }();
+                QJsonObject l2; l2["type"]="layout"; l2["sizes"]=s2; ipcSend(s, l2);
+            });
+        } else {
+            QJsonObject l1; l1["type"]="layout"; l1["sizes"]=sizes; ipcSend(s, l1);
+        }
+        return;
+    }
     if (c == "scan") { reply(true, "scanning"); scanProbes(true); return; }
     if (c == "setfw") {
         QString path = cmd["path"].toString();
@@ -312,9 +433,14 @@ void MainWindow::handleIpcCommand(QTcpSocket *s, const QJsonObject& cmd) {
     if (c == "led") {
         int mode = cmd["mode"].toInt();
         enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_LED_MODE, (uint32_t)mode));
-        if (cmd.contains("value")) {
-            if (mode == 1) enqueueToActive(Command(CmdType::WRITE_16, OFS_OVR_PWM_VAL, (uint32_t)cmd["value"].toInt()));
-            else enqueueToActive(Command(CmdType::WRITE_16, OFS_OVR_BRT_VAL, (uint32_t)cmd["value"].toInt()));
+        /* 兼容 value/pwm/brt 三种字段: mode1 写 PWM, mode2/3 写 Brt */
+        int ledVal = -1;
+        if (cmd.contains("value")) ledVal = cmd["value"].toInt();
+        else if (cmd.contains("pwm")) ledVal = cmd["pwm"].toInt();
+        else if (cmd.contains("brt")) ledVal = cmd["brt"].toInt();
+        if (ledVal >= 0) {
+            if (mode == 1) enqueueToActive(Command(CmdType::WRITE_16, OFS_OVR_PWM_VAL, (uint32_t)ledVal));
+            else enqueueToActive(Command(CmdType::WRITE_16, OFS_OVR_BRT_VAL, (uint32_t)ledVal));
         }
         reply(true, "led queued");
         return;
@@ -344,6 +470,22 @@ void MainWindow::handleIpcCommand(QTcpSocket *s, const QJsonObject& cmd) {
         QVariantMap m = cmd["map"].toObject().toVariantMap();
         enqueueToActive(Command(ct, a1, a2, str, m));
         reply(true, "cmd queued");
+        return;
+    }
+    if (c == "autotest") {
+        enqueueToActive(Command(CmdType::AUTO_TEST));
+        reply(true, "autotest queued");
+        return;
+    }
+    if (c == "calib") {
+        enqueueToActive(Command(CmdType::AUTO_CALIBRATE));
+        reply(true, "calib queued");
+        return;
+    }
+    if (c == "tab") {
+        int idx = cmd["index"].toInt();
+        if (tabs && idx >= 0 && idx < tabs->count()) { tabs->setCurrentIndex(idx); reply(true, "tab switched"); }
+        else reply(false, "bad tab index");
         return;
     }
     reply(false, "unknown cmd: " + c);
@@ -410,11 +552,7 @@ void MainWindow::setupUI() {
 
     mainLayout->addWidget(headerFrame);
 
-    QSplitter *mainSplitter = new QSplitter(Qt::Vertical);
-    mainSplitter->setHandleWidth(8);
-    mainSplitter->setChildrenCollapsible(false);
-
-    QTabWidget *tabs = new QTabWidget();
+    tabs = new QTabWidget();
     QWidget *tabProg = new QWidget();
     QVBoxLayout *vProg = new QVBoxLayout(tabProg);
 
@@ -467,7 +605,13 @@ void MainWindow::setupUI() {
 
     QWidget *tabTest = new QWidget();
     QVBoxLayout *vTestMain = new QVBoxLayout(tabTest);
-    QHBoxLayout *hCols = new QHBoxLayout();
+    /* 左右两列也支持鼠标拖动调整比例, 并随布局记忆保存 */
+    colsSplitter = new QSplitter(Qt::Horizontal);
+    colsSplitter->setHandleWidth(8);
+    colsSplitter->setChildrenCollapsible(false);
+    colsSplitter->setStretchFactor(0, 1);
+    colsSplitter->setStretchFactor(1, 1);
+    colsSplitter->setSizes({520, 400});   /* 默认初始比例, 避免首次保存时为全 0 */
 
     // =============== 鍒?1: 鍩虹鍛戒护鍜岃缃?===============
     QVBoxLayout *col1 = new QVBoxLayout();
@@ -497,9 +641,9 @@ void MainWindow::setupUI() {
 
     QGroupBox *grpAdv = new QGroupBox("Advanced Parameters");
     QGridLayout *gridAdv = new QGridLayout(grpAdv);
-    QStringList prmTexts = {"R_Base(mOhm):", "Series(mOhm):", "LED Vf(mV):", "Max I(uA):", "Max P(uW):", "ALS Min:", "LVP Crit:", "LVP Ext:", "Def Lvl:", "ALS Sqrt:", "ALS Cap Lo:", "ALS Cap Hi:"};
-    QStringList prmKeys = {"r_base", "r_series", "v_fw", "i_max", "p_batt", "als_min", "lvp_crit", "lvp_ext", "def_lvl", "als_sqrt", "als_cap_low", "als_cap_high"};
-    int prmMax[] = {9999, 999999, 5000, 100000, 99999999, 1000, 5000, 5000, 8, 20, 20, 20};
+    QStringList prmTexts = {"R_Base(mOhm):", "Series(mOhm):", "LED Vf(mV):", "Max I(uA):", "Max P(uW):", "ALS Min:", "LVP Crit:", "LVP Ext:", "Def Lvl:", "ALS Sqrt:", "ALS Cap Lo:", "ALS Cap Hi:", "ALS Offset:"};
+    QStringList prmKeys = {"r_base", "r_series", "v_fw", "i_max", "p_batt", "als_min", "lvp_crit", "lvp_ext", "def_lvl", "als_sqrt", "als_cap_low", "als_cap_high", "als_offset"};
+    int prmMax[] = {9999, 999999, 5000, 100000, 99999999, 1000, 5000, 5000, 8, 20, 20, 20, 4};
     for (int i = 0; i < prmKeys.size(); ++i) {
         QLabel *l = new QLabel(prmTexts[i]);
         l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -585,8 +729,8 @@ void MainWindow::setupUI() {
     lPoll->addWidget(spinPollMs);
     vMon->addLayout(lPoll);
 
-    QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(Filt)", "Lux(RAW)", "Btn[-]", "Btn[+]", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags"};
-    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "raw_k_m", "raw_k_p", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags"};
+    QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(Filt)", "Lux(RAW)", "ALS Off", "Btn[-]", "Btn[+]", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags"};
+    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "als_off", "raw_k_m", "raw_k_p", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags"};
     const int MON_COLS = 10;
     QGridLayout *gridMon = new QGridLayout();
     gridMon->setHorizontalSpacing(6);
@@ -658,10 +802,17 @@ void MainWindow::setupUI() {
     chkOvrAls = new QCheckBox("Fake Lux:");
     connect(chkOvrAls, &QCheckBox::toggled, this, &MainWindow::updateAls);
     spinLux = new QSpinBox();
-    spinLux->setRange(0, 10000);
-    connect(spinLux, &QSpinBox::valueChanged, this, &MainWindow::updateAls);
+    spinLux->setRange(0, 8386500);
+    spinLux->setToolTip(u8"注入环境光(lux)覆盖真实传感器, 覆盖 OPT3001 全量程 0..8386500");
+    connect(spinLux, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updateAls);
+    connect(spinLux, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updateAlsPreview);
     lAls->addWidget(chkOvrAls); lAls->addWidget(spinLux);
+    lblAlsMap = new QLabel("-> --");
+    lblAlsMap->setStyleSheet("color: #0066CC; font-weight: bold; border: 1px solid #B0C4DE; border-radius: 3px; background: #EFF6FF; padding: 2px 6px;");
+    lblAlsMap->setToolTip(u8"ALS 亮度映射预览(参考固件 7*sqrt 曲线 + 5 档偏移 + 低/高量程钳位): 目标 Brt% 与输出 PWM");
+    lAls->addWidget(lblAlsMap, 1);
     vOvr->addLayout(lAls);
+    updateAlsPreview();
 
     QVBoxLayout *lLed = new QVBoxLayout();
     lLed->addWidget(new QLabel("LED Output Mode:"));
@@ -714,9 +865,8 @@ void MainWindow::setupUI() {
         wcPal.setColor(QPalette::Window, colBg);
         wc->setPalette(wcPal);
     }
-    hCols->addWidget(saCol1, 1);
-    hCols->addWidget(saCol3, 1);
-    vTestMain->addLayout(hCols, 1);
+    colsSplitter->addWidget(saCol1);
+    colsSplitter->addWidget(saCol3);
 
     // =============== 鏇茬嚎鍥?===============
     chart = new QChart();
@@ -750,14 +900,27 @@ void MainWindow::setupUI() {
     QChartView *chartView = new QChartView(chart);
     chartView->setRenderHint(QPainter::Antialiasing);
     chartView->setStyleSheet("background: transparent; border: 1px solid #CCC; border-radius: 4px;");
-    chartView->setFixedHeight(170);
-    /* 固定高度长条在最上方, 图表固定高度居中, 下方两列填充剩余空间 */
+    chartView->setMinimumHeight(110);
+    /* 固定高度遥测长条在最上方; 图表与下方两列放入可拖动分栏 testSplitter */
+    QWidget *colsWidget = new QWidget();
+    QVBoxLayout *vColsWrap = new QVBoxLayout(colsWidget);
+    vColsWrap->setContentsMargins(0, 0, 0, 0);
+    vColsWrap->addWidget(colsSplitter);
+    testSplitter = new QSplitter(Qt::Vertical);
+    testSplitter->setHandleWidth(8);
+    testSplitter->setChildrenCollapsible(false);
+    testSplitter->addWidget(chartView);
+    testSplitter->addWidget(colsWidget);
+    testSplitter->setStretchFactor(0, 0);
+    testSplitter->setStretchFactor(1, 1);
+    testSplitter->setSizes({170, 420});
     vTestMain->addWidget(grpMon);
-    vTestMain->addWidget(chartView);
-    vTestMain->addLayout(hCols, 1);
+    vTestMain->addWidget(testSplitter, 1);
 
     tabs->addTab(tabTest, "2. Test & Calibration Mode");
-    mainSplitter->addWidget(tabs);
+    /* 切换页签时应用待定分栏比例 (页签显示后才有真实尺寸) */
+    connect(tabs, &QTabWidget::currentChanged, this, [this](int){ applyPendingRatios(); });
+    mainLayout->addWidget(tabs, 1);
 
     // =============== 缁堢鏃ュ織鎺у埗鍙?===============
     consoleContainer = new QWidget();
@@ -789,10 +952,6 @@ void MainWindow::setupUI() {
 
     vConsoleLayout->addWidget(consoleHeader);
     vConsoleLayout->addWidget(txtGlobalLog);
-    mainSplitter->addWidget(consoleContainer);
-
-    mainSplitter->setSizes({600, 200});
-    mainLayout->addWidget(mainSplitter, 1);
 
     consoleWindow = new QDialog(nullptr);
     consoleWindow->setAttribute(Qt::WA_QuitOnClose, false);
@@ -824,8 +983,37 @@ void MainWindow::setupUI() {
     logTable->setSelectionMode(QAbstractItemView::NoSelection);
     vLog->addWidget(logTable);
 
-    globalLayout->addLayout(mainLayout, 8);
-    globalLayout->addWidget(grpLog, 2);
+    /* 全局水平分栏: 左侧主区(头部+页签), 右侧一列(会话日志 + 内嵌日志窗口) */
+    globalSplitter = new QSplitter(Qt::Horizontal);
+    globalSplitter->setHandleWidth(8);
+    globalSplitter->setChildrenCollapsible(false);
+    QWidget *leftPane = new QWidget();
+    leftPane->setLayout(mainLayout);
+    globalSplitter->addWidget(leftPane);
+    rightSplitter = new QSplitter(Qt::Vertical);
+    rightSplitter->setHandleWidth(8);
+    rightSplitter->setChildrenCollapsible(false);
+    grpLog->setMinimumWidth(280);
+    rightSplitter->addWidget(grpLog);
+    rightSplitter->addWidget(consoleContainer);
+    rightSplitter->setSizes({560, 300});
+    globalSplitter->addWidget(rightSplitter);
+    globalSplitter->setStretchFactor(0, 7);
+    globalSplitter->setStretchFactor(1, 3);
+    globalSplitter->setSizes({1000, 420});
+    globalLayout->addWidget(globalSplitter, 1);
+
+    /* 拖动分栏后自动记忆布局比例 */
+    layoutSaveTimer = new QTimer(this);
+    layoutSaveTimer->setSingleShot(true);
+    layoutSaveTimer->setInterval(250);
+    connect(layoutSaveTimer, &QTimer::timeout, this, &MainWindow::saveLayoutState);
+    auto armSave = [this](){ if (layoutSaveTimer) layoutSaveTimer->start(); };
+    if (globalSplitter) connect(globalSplitter, &QSplitter::splitterMoved, this, [armSave](int,int){ armSave(); });
+    if (rightSplitter) connect(rightSplitter, &QSplitter::splitterMoved, this, [armSave](int,int){ armSave(); });
+    if (testSplitter) connect(testSplitter, &QSplitter::splitterMoved, this, [armSave](int,int){ armSave(); });
+    if (colsSplitter) connect(colsSplitter, &QSplitter::splitterMoved, this, [armSave](int,int){ armSave(); });
+
 }
 
 void MainWindow::toggleConsoleWindow() {
@@ -1187,6 +1375,43 @@ void MainWindow::updateAls() {
     enqueueToActive(Command(CmdType::WRITE_32, OFS_OVR_ALS_LUX, (uint32_t)spinLux->value()));
 }
 
+static uint32_t alsFastIsqrt(uint32_t n) {
+    uint32_t root = 0, bit = 1UL << 30;
+    while (bit > n) bit >>= 2;
+    while (bit != 0) {
+        if (n >= root + bit) { n -= root + bit; root = (root >> 1) + bit; }
+        else root >>= 1;
+        bit >>= 2;
+    }
+    return root;
+}
+
+void MainWindow::updateAlsPreview() {
+    if (!lblAlsMap) return;
+    const uint32_t PWM_REG_MAX = 2399;
+    const uint32_t BRT_SCALE_MAX = 1000;
+    uint32_t lux = (uint32_t)spinLux->value();
+    uint32_t lux_int = lux / 100;
+    uint32_t factor = cfgVars.contains("als_sqrt") && cfgVars["als_sqrt"]->value() ? (uint32_t)cfgVars["als_sqrt"]->value() : 5u;
+    uint32_t capLow  = cfgVars.contains("als_cap_low")  && cfgVars["als_cap_low"]->value()  ? (uint32_t)cfgVars["als_cap_low"]->value() * 100u  : 600u;
+    uint32_t capHigh = cfgVars.contains("als_cap_high") && cfgVars["als_cap_high"]->value() ? (uint32_t)cfgVars["als_cap_high"]->value() * 100u : 800u;
+    uint32_t minBrt  = cfgVars.contains("als_min") ? (uint32_t)cfgVars["als_min"]->value() : 50u;
+    int offIdx = cfgVars.contains("als_offset") ? cfgVars["als_offset"]->value() : 2;
+    if (offIdx > 4) offIdx = 2;
+    static const int AUTO_OFFSET_PCT[5] = {-50, -30, 0, 30, 50};
+
+    /* ??? als_lux_to_brt ??: base = factor*sqrt(lux/100), 5 ???, min/cap/1000 ?? */
+    int64_t base = (int64_t)factor * (int64_t)alsFastIsqrt(lux_int);
+    int64_t target = base + (base * AUTO_OFFSET_PCT[offIdx]) / 100;
+    if (target < (int64_t)minBrt) target = minBrt;
+    int64_t cap = (lux_int <= 10000) ? (int64_t)capLow : (int64_t)capHigh;
+    if (target > cap) target = cap;
+    if (target > (int64_t)BRT_SCALE_MAX) target = BRT_SCALE_MAX;
+    if (target < 0) target = 0;
+    uint32_t pwm = (uint32_t)(PWM_REG_MAX - (uint32_t)target * PWM_REG_MAX / BRT_SCALE_MAX);
+    lblAlsMap->setText(QString("-> %1% / PWM %2").arg(target / 10.0, 0, 'f', 1).arg(pwm));
+}
+
 void MainWindow::onLedModeChanged() {
     int mode = cmbLedMode->currentIndex();
     spinLed->setEnabled(mode != 0);
@@ -1335,6 +1560,7 @@ void MainWindow::onConfigRead(uint32_t sn, const QVariantMap& cfg) {
     for(auto key : cfgVars.keys()) {
         if(cfg.contains(key)) cfgVars[key]->setValue(cfg[key].toUInt());
     }
+    updateAlsPreview();
     onLog(sn, "[INFO] UI configuration fully synchronized with device.");
 }
 
@@ -1376,6 +1602,7 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     monVars["err_cnt"]->setText(data["err_cnt"].toString());
     monVars["lux"]->setText(data["lux"].toString());
     monVars["lux_raw"]->setText(data["lux_raw"].toString());
+    monVars["als_off"]->setText(QString::number((data["cfg_params"].toUInt() >> 16) & 0xFF));
 
     monVars["raw_k_m"]->setText(data["raw_k_m"].toInt() ? "Released" : "PRESSED");
     monVars["raw_k_p"]->setText(data["raw_k_p"].toInt() ? "Released" : "PRESSED");

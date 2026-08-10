@@ -133,6 +133,7 @@ void test_mailbox_task(void) {
                 }
             } else {
                 sys_state = SYS_RUN;   /* 已在运行/测试态: 直接保持运行 */
+                mode_init();           /* TEST->RUN 也需重新初始化 ALS/档位标志 */
             }
             test_mode_active = false;
             g_test_box.magic = 0;   /* 退出测试模式, 保持 RUN */

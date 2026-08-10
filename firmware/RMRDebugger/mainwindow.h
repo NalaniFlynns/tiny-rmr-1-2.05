@@ -15,6 +15,8 @@
 #include <QMap>
 #include <QTextEdit>
 #include <QResizeEvent>
+#include <QCloseEvent>
+#include <QSplitter>
 #include <QDialog>
 #include <QVBoxLayout>
 #include <QtCharts/QChartView>
@@ -37,6 +39,7 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
 
 public slots:
     void onRawJLinkLog(const QString& log);
@@ -98,6 +101,17 @@ private:
     QMap<uint32_t, QString> probeFwVers;
     QTimer *autoScanTimer;
 
+    QSplitter *globalSplitter = nullptr;
+    QSplitter *rightSplitter = nullptr;
+    QSplitter *testSplitter = nullptr;
+    QSplitter *colsSplitter = nullptr;
+    QTimer *layoutSaveTimer = nullptr;
+    QHash<QSplitter*, QList<double>> pendingRatios;
+    void saveLayoutState();
+    void restoreLayoutState();
+    void applyPendingRatios();
+
+    QTabWidget *tabs = nullptr;
     QLabel *lblIndicator;
     QLabel *lblStatus;
     QComboBox *cmbActiveProbe;
@@ -125,6 +139,8 @@ private:
     QCheckBox *chkPoll;
     QCheckBox *chkOvrAls;
     QSpinBox *spinLux;
+    QLabel *lblAlsMap;
+    void updateAlsPreview();
 
     QLineEdit *txtMemAddr;
     QComboBox *cmbMemSize;

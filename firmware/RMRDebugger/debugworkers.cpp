@@ -50,6 +50,7 @@ void BaseWorker::processCommandGeneric(const Command& cmd) {
             readBlock(OFS_CFG_PARAMS, 44, data);
             QVariantMap cfg;
             cfg["def_lvl"] = *(uint32_t*)(data + 0) & 0xFF;
+            cfg["als_offset"] = (*(uint32_t*)(data + 0) >> 16) & 0xFF;
             cfg["feat"] = *(uint32_t*)(data + 4);
             cfg["r_base"] = *(uint32_t*)(data + 8);
             cfg["r_series"] = *(uint32_t*)(data + 12);
@@ -90,10 +91,16 @@ void BaseWorker::processCommandGeneric(const Command& cmd) {
                     w8(OFS_CFG_ALS_SQRT, "als_sqrt");
                     w8(OFS_CFG_ALS_CAP_LOW, "als_cap_low");
                     w8(OFS_CFG_ALS_CAP_HIGH, "als_cap_high");
-                    /* cfg_params: 仅替换低 8 位默认档位, 保留 ALS(bit8)/offset(bit16-23) 等高位 */
-                    if (cfg.contains("def_lvl")) {
+                    /* cfg_params: 只改提供的位段, 保留其它高位(ALS bit8/offset bit16-23) */
+                    if (cfg.contains("def_lvl") || cfg.contains("als_offset")) {
                         uint32_t current_params = read32(OFS_CFG_PARAMS);
-                        current_params = (current_params & 0xFFFFFF00) | (cfg["def_lvl"].toUInt() & 0xFF);
+                        if (cfg.contains("def_lvl"))
+                            current_params = (current_params & 0xFFFFFF00) | (cfg["def_lvl"].toUInt() & 0xFF);
+                        if (cfg.contains("als_offset")) {
+                            uint32_t off = cfg["als_offset"].toUInt() & 0xFF;
+                            if (off > 4) off = 2;   /* 5 档偏移 0..4, 非法回中档 */
+                            current_params = (current_params & 0xFF00FFFF) | (off << 16);
+                        }
                         write32(OFS_CFG_PARAMS, current_params);
                     }
                 }
@@ -155,11 +162,15 @@ void BaseWorker::processCommandGeneric(const Command& cmd) {
             uint16_t pwm_dark = read16(OFS_CURRENT_PWM);
 
             emit sigProgress(probeSN, 70, "Testing ALS (Bright)...");
-            write32(OFS_OVR_ALS_LUX, 5000);
-            msleep(1500);
+            /* ALS 曲线最低为 ALS_MIN_BRT(50), lux<=10000 时亮度被钳位在 50,
+             * 必须注入足够大光照才能超出最低值:
+             * lux=50000 -> lux_int=500, base=5*22=110 > 50, 可区分 dark/bright */
+            write32(OFS_OVR_ALS_LUX, 50000);
+            msleep(2000);
             uint16_t pwm_bright = read16(OFS_CURRENT_PWM);
 
-            if (pwm_bright <= pwm_dark) throw std::runtime_error("ALS Response Fail. Bright PWM should be > Dark PWM.");
+            /* PWM 寄存器值越小越亮: 亮环境下 brt 更大 -> pwm 应更小 */
+            if (pwm_bright >= pwm_dark) throw std::runtime_error("ALS Response Fail. Bright PWM should be < Dark PWM.");
 
             write8(OFS_OVR_ALS_EN, 0);
             emit sigProgress(probeSN, 100, "Pass");
@@ -256,6 +267,7 @@ void BaseWorker::pollTelemetryGeneric() {
     map["ovr_brt"] = *(uint16_t*)(data + OFS_OVR_BRT_VAL);
     map["ovr_pwm"] = *(uint16_t*)(data + OFS_OVR_PWM_VAL);
     map["ovr_lux"] = *(uint32_t*)(data + OFS_OVR_ALS_LUX);
+    map["cfg_params"] = *(uint32_t*)(data + OFS_CFG_PARAMS);
     map["fw_ver"] = QString::fromUtf8((const char*)(data + OFS_FW_VER_STR)).trimmed();
     emit sigTelemetry(probeSN, map);
 }
