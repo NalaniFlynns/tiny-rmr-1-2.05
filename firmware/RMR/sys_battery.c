@@ -76,12 +76,16 @@ uint16_t battery_get_safe_brt(uint16_t req_brt) {
     uint32_t l_v_drop = BRT_SCALE_MAX;
     
     if (EN_WALLS && (v_cap_mv > v_drop_total) && (v_cap_mv - v_drop_total < WALL_MIN_V_BATT_MV)) {
-        uint32_t allowed_drop_total = v_cap_mv - WALL_MIN_V_BATT_MV;
-        if (allowed_drop_total <= v_drop_peak) l_v_drop = LOW_BRT_GUARANTEE;
+        /* v_cap ????: ?????????, ?? uint32 ???????? */
+        if (v_cap_mv <= WALL_MIN_V_BATT_MV) l_v_drop = LOW_BRT_GUARANTEE;
         else {
-            uint32_t allowed_drop_avg = allowed_drop_total - v_drop_peak;
-            l_v_drop = (uint32_t)(((uint64_t)allowed_drop_avg * 1000000000ULL) / ((uint64_t)i_pulse_ua * r_dyn_mohm));
-            if (l_v_drop < LOW_BRT_GUARANTEE) l_v_drop = LOW_BRT_GUARANTEE;
+            uint32_t allowed_drop_total = v_cap_mv - WALL_MIN_V_BATT_MV;
+            if (allowed_drop_total <= v_drop_peak) l_v_drop = LOW_BRT_GUARANTEE;
+            else {
+                uint32_t allowed_drop_avg = allowed_drop_total - v_drop_peak;
+                l_v_drop = (uint32_t)(((uint64_t)allowed_drop_avg * 1000000000ULL) / ((uint64_t)i_pulse_ua * r_dyn_mohm));
+                if (l_v_drop < LOW_BRT_GUARANTEE) l_v_drop = LOW_BRT_GUARANTEE;
+            }
         }
     }
 
@@ -123,7 +127,11 @@ uint16_t battery_brt_to_pwm(uint16_t brt) {
     uint32_t i_peak_ua = (uint32_t)(((uint64_t)(v_cap_mv - sys_memory.v_led_fw) * 1000000ULL) / r_total_mohm);
     if (i_peak_ua == 0) return PWM_REG_MAX;
 
-    uint32_t i_req_avg = (brt * sys_memory.i_max_ua) / BRT_SCALE_MAX;
+    /* ???? min(??????, ??????), ?? brt 0-1000 ?????? 0-100%,
+       ????? brt=1000 ??????, ?????? */
+    uint32_t i_full_ua = (i_peak_ua > sys_memory.i_max_ua) ? sys_memory.i_max_ua : i_peak_ua;
+    if (i_full_ua == 0) return PWM_REG_MAX;
+    uint32_t i_req_avg = (brt * i_full_ua) / BRT_SCALE_MAX;
     uint32_t duty_mille = (i_req_avg * 1000) / i_peak_ua;
     if (duty_mille > 1000) duty_mille = 1000;
     return (uint16_t)(PWM_REG_MAX - (duty_mille * PWM_REG_MAX / 1000));

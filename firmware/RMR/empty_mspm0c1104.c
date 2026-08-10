@@ -160,6 +160,14 @@ int main(void) {
                     if (sys_state == SYS_RUN || sys_state == SYS_ALS_ERR) sys_state = SYS_LVP_CRIT;
                 }
             } else { lvp_crit_cnt = 0; }
+
+            /* ????(???)???? LVP_CRIT, ???????????? LED ?? */
+            if (sys_state == SYS_LVP_CRIT && g_vbatt_mv_filtered >= (sys_memory.lvp_crit + BATT_STARTUP_HYSTERESIS_MV)) {
+                sys_state = SYS_RUN;
+                g_inactivity_sec = 0;
+                g_is_dimmed = false;
+                mode_init();
+            }
         }
 
         if (sys_state == SYS_OFF) {

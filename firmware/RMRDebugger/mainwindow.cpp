@@ -76,6 +76,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     autoScanTimer->start(2000);
 
     QTimer::singleShot(500, this, [this](){ scanProbes(false); });
+    /* ????????: ?? QtCharts ??? append/remove + setRange ???????? */
+    chartRefreshTimer = new QTimer(this);
+    connect(chartRefreshTimer, &QTimer::timeout, this, [this](){
+        if (viewVBatt) viewVBatt->viewport()->update();
+        if (viewLux) viewLux->viewport()->update();
+        if (viewPwmBrt) viewPwmBrt->viewport()->update();
+    });
+    chartRefreshTimer->start(200);
     /* 窗口显示并完成首次布局后再恢复分栏比例, 避免被初始布局覆盖 */
     QTimer::singleShot(0, this, &MainWindow::restoreLayoutState);
 }
@@ -996,9 +1004,9 @@ void MainWindow::setupUI() {
     QHBoxLayout *hCharts = new QHBoxLayout(chartPanel);
     hCharts->setContentsMargins(0, 0, 0, 0);
     hCharts->setSpacing(6);
-    hCharts->addWidget(makePlotView(chartVBatt), 1);
-    hCharts->addWidget(makePlotView(chartLux), 1);
-    hCharts->addWidget(makePlotView(chartPwmBrt), 1);
+    viewVBatt = makePlotView(chartVBatt); hCharts->addWidget(viewVBatt, 1);
+    viewLux = makePlotView(chartLux); hCharts->addWidget(viewLux, 1);
+    viewPwmBrt = makePlotView(chartPwmBrt); hCharts->addWidget(viewPwmBrt, 1);
 
     /* ????????????; ?????????????? testSplitter */
     QWidget *colsWidget = new QWidget();
@@ -1686,7 +1694,7 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
 
     monVars["v_led"]->setText(data["v_led"].toString());
     monVars["brt"]->setText(data["brt"].toString() + " (Max:" + data["safe_brt"].toString() + ")");
-    monVars["pwm"]->setText(data["pwm"].toString());
+    monVars["pwm"]->setText(data["pwm"].toString() + " / 2399");
 
     monVars["p_led"]->setText(QString::number(data["p_led"].toInt() / 1000.0, 'f', 1));
     /* hardware power: mW with 3 decimals, derived from current PWM;
@@ -1733,24 +1741,34 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     const qreal WINDOW_S = 10.0;
     const qreal KEEP_S = 15.0;
     qreal xNow = plotClock.elapsed() / 1000.0;
-    seriesVBatt->append(xNow, data.contains("vbatt_raw") ? data["vbatt_raw"].toUInt() : data["vbatt"].toUInt());
-    seriesLux->append(xNow, data["lux"].toUInt());
-    seriesPwm->append(xNow, data["pwm"].toUInt());
-    seriesBrt->append(xNow, data["brt"].toUInt());
-    auto trim = [&](QLineSeries *s) {
-        while (s->count() && s->at(0).x() < xNow - KEEP_S) s->remove(0);
+    /* append + ?? replace ???????(??????, ???? remove(0) ?? QtCharts ????) */
+    auto pushPoint = [&](QLineSeries *s, qreal y){
+        s->append(xNow, y);
+        const qreal cut = xNow - KEEP_S;
+        if (s->count() && s->at(0).x() < cut) {
+            QList<QPointF> pts;
+            pts.reserve(s->count());
+            for (int i = 0; i < s->count(); ++i) {
+                const QPointF &p = s->at(i);
+                if (p.x() >= cut) pts.append(p);
+            }
+            s->replace(pts);
+        }
     };
-    trim(seriesVBatt); trim(seriesLux); trim(seriesPwm); trim(seriesBrt);
+    pushPoint(seriesVBatt, data.contains("vbatt_raw") ? data["vbatt_raw"].toUInt() : data["vbatt"].toUInt());
+    pushPoint(seriesLux, data["lux"].toUInt());
+    pushPoint(seriesPwm, data["pwm"].toUInt());
+    pushPoint(seriesBrt, data["brt"].toUInt());
     qreal xLo = qMax<qreal>(0, xNow - WINDOW_S);
     axisX1->setRange(xLo, xNow);
     axisX2->setRange(xLo, xNow);
     axisX3->setRange(xLo, xNow);
-    /* Y axis auto-scale by current window min/max + margin */
-    autoScaleAxis(axisYV, seriesVBatt);
-    autoScaleAxis(axisYL, seriesLux);
-    autoScaleAxis(axisYP, seriesPwm, seriesBrt);
+    /* Y axis auto-scale by current window min/max + margin; ?????? raw ??????? */
+    autoScaleAxis(axisYV, seriesVBatt, nullptr, 250.0);
+    autoScaleAxis(axisYL, seriesLux, nullptr, 2000.0);
+    autoScaleAxis(axisYP, seriesPwm, seriesBrt, 200.0);
 }
-void MainWindow::autoScaleAxis(QValueAxis *axis, QLineSeries *s1, QLineSeries *s2) {
+void MainWindow::autoScaleAxis(QValueAxis *axis, QLineSeries *s1, QLineSeries *s2, qreal minSpan) {
     if (!axis || !s1 || s1->count() == 0) return;
     qreal mn = s1->at(0).y(), mx = mn;
     auto scan = [&](QLineSeries *s) {
@@ -1763,6 +1781,14 @@ void MainWindow::autoScaleAxis(QValueAxis *axis, QLineSeries *s1, QLineSeries *s
     };
     scan(s1); scan(s2);
     if (mx - mn < 1.0) { mn -= 1.0; mx += 1.0; }
+    /* ????: ???????????? minSpan, ???????????? */
+    if (minSpan > 0.0 && (mx - mn) < minSpan) {
+        qreal mid = (mx + mn) / 2.0;
+        qreal lo2 = mid - minSpan / 2.0, hi2 = mid + minSpan / 2.0;
+        if (lo2 < 0.0) { lo2 = 0.0; hi2 = minSpan; }
+        if (hi2 < mx) { hi2 = mx; lo2 = hi2 - minSpan; if (lo2 < 0.0) lo2 = 0.0; }
+        mn = lo2; mx = hi2;
+    }
     qreal pad = (mx - mn) * 0.08 + 0.5;
     axis->setRange(qMax<qreal>(0.0, mn - pad), mx + pad);
 }
