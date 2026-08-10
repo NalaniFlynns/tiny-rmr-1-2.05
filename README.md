@@ -20,6 +20,11 @@
 - **固件**：TEST 态 LED 按键输出与真实模式一致（ALS 走 `mode_task()`、手动走 `CFG_BRT_MAP`），TEST 态按键分发补齐 `EVT_BOTH_LONG_5S`
 
 
+## 更新记录（2026-08-10 深夜，V4.3.1 增量 6：电压降额 + PWM 补偿）
+- **根因修复**：`battery_brt_to_pwm` 原来用 `min(i_peak, i_max)` 计算满亮度电流，3.0V 时峰值电流约 2.1mA 恒低于 2.8mA 上限，导致 PWM 占空比恒等于 brt、与电压无关；已改为恒流模型 `i_req = brt*i_max/1000`，`duty = i_req/i_peak`，电压下降时占空比自动升高维持亮度
+- **电压线性降额**：新增 `V_DERATE_FULL_MV 3300`；`battery_get_safe_brt` 在 2400mV→30、3300mV→1000 之间按电压线性缩放安全亮度上限，低电压下自动限制档位与亮度（实测 @2.88V safe≈547）
+- **刷新修复**：删除 BRT 缓存，电压变化（30mV 以上）不再冻结显示；LVP 分支同样刷新 `g_safe_brt_out`
+- **构建根治**：CCS21 工程改用 post-build `tiarmobjcopy -O ihex` 生成 HEX（停用 tiarmhex），根治版本段错误；`.cproject` 已更新
 ## 更新记录（2026-08-10 晚，V4.3.1 增量 5）
 - **固件 brt→PWM 全量程线性修复**：`battery_brt_to_pwm` 新增 `min(i_peak, i_max)` 钳位，`brt 0-1000` 从头到尾线性映射到 0-100%（此前烧录版本在 brt≈980 就提前饱和 100%）；同时修复 WALL 电压下限计算的 uint32 下溢（低电压时功率墙失效问题）
 - **LVP_CRIT 迟滞自恢复**：进入 `SYS_LVP_CRIT` 后当电压回升 +100mV（`BATT_STARTUP_HYSTERESIS_MV`）自动恢复 `SYS_RUN`，根治低电压时的 2s 周期債动闪烁（明亮每 2s 瞬间暗一下）和长期卡在 LVP 状态问题

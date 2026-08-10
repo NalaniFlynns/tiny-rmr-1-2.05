@@ -125,6 +125,7 @@
 #define BATT_MAX_DISCHARGE_UA   4000
 #define BATT_MAX_DISCHARGE_UW   9000
 #define LOW_BRT_GUARANTEE       30
+#define V_DERATE_FULL_MV       3300      /* 电压 ≥ 此值时无电压降额, 低于则线性降至墙电压 */
 #define HW_LED_FORWARD_V_MV     2200
 #define HW_LED_MAX_CURRENT_UA   2800
 #define HW_SERIES_R_MOHM        360000
