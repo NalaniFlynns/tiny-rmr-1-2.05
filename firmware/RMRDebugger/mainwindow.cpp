@@ -70,6 +70,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     initDatabase();
     setupUI();
+    /* Power-Z KM003C: 真实电压电流计, HID Basic Mode, 200ms 轮询 */
+    pzWorker = new PowerZWorker(this);
+    connect(pzWorker, &PowerZWorker::telemetry, this, &MainWindow::onPowerZTelemetry);
+    connect(pzWorker, &PowerZWorker::stateChanged, this, [this](bool ok, const QString &detail){
+        if (!lblPzStatus) return;
+        lblPzStatus->setText(ok ? "Power-Z: 已连接" : detail);
+        lblPzStatus->setStyleSheet(ok ? "border: none; color: #198754; font-size: 8pt; font-weight: bold;"
+                                      : "border: none; color: #C00000; font-size: 8pt; font-weight: bold;");
+    });
+    pzWorker->start(200);
     applyTheme();
     setupIpc();
 
@@ -98,6 +108,7 @@ MainWindow::~MainWindow() {
         w->wait(1000);
         w->deleteLater();
     }
+    if (pzWorker) pzWorker->stop();
     if (consoleWindow) consoleWindow->deleteLater();
     db.close();
 }
@@ -281,6 +292,15 @@ void MainWindow::ipcSendHello(QTcpSocket *s) {
         probes.append(p);
     }
     hello["probes"] = probes;
+    if (pzWorker) {
+        QJsonObject pz;
+        pz["connected"] = pzWorker->isConnected();
+        pz["vbus_v"] = pzWorker->vbus();
+        pz["ibus_a"] = pzWorker->ibus();
+        pz["power_w"] = pzWorker->power();
+        pz["temp_c"] = pzWorker->tempC();
+        hello["powerz"] = pz;
+    }
     ipcSend(s, hello);
 }
 
@@ -774,6 +794,36 @@ void MainWindow::setupUI() {
     }
     for (int c = 0; c < MON_COLS; ++c) gridMon->setColumnStretch(c, 1);
     vMon->addLayout(gridMon);
+    /* Power-Z KM003C 真实电压电流计 (真实电压/电流/功耗, 6 位小数) */
+    QHBoxLayout *hPz = new QHBoxLayout();
+    hPz->setSpacing(6);
+    lblPzStatus = new QLabel("Power-Z: 未连接");
+    lblPzStatus->setStyleSheet("border: none; color: #999999; font-size: 8pt; font-weight: bold;");
+    hPz->addWidget(lblPzStatus);
+    auto addPzField = [&](const QString &label, QLineEdit *&out){
+        QWidget *cell = new QWidget();
+        cell->setFixedHeight(40);
+        QVBoxLayout *vCell = new QVBoxLayout(cell);
+        vCell->setContentsMargins(2, 1, 2, 1);
+        vCell->setSpacing(0);
+        QLabel *l = new QLabel(label);
+        l->setStyleSheet("border: none; color: #666666; font-size: 7pt; font-weight: bold;");
+        QLineEdit *le = new QLineEdit("-");
+        le->setReadOnly(true);
+        le->setFixedHeight(22);
+        le->setStyleSheet("color: #00897B; font-weight: bold; border: 1px solid #DDDDDD; border-radius: 2px; background: #FFFFFF; padding: 0 3px; font-size: 8pt;");
+        out = le;
+        vCell->addWidget(l);
+        vCell->addWidget(le);
+        hPz->addWidget(cell, 1);
+    };
+    addPzField("Real V (V)", lePzV);
+    addPzField("Real I (A)", lePzI);
+    addPzField("Real P (W)", lePzP);
+    addPzField("AVG V (V)", lePzVAvg);
+    addPzField("AVG I (A)", lePzIAvg);
+    addPzField("Temp (C)", lePzTemp);
+    vMon->addLayout(hPz);
 
     // =============== 鍒?3: 鎺ョ瑕嗙洊鍙婃祴璇?===============
     QVBoxLayout *col3 = new QVBoxLayout();
@@ -1720,6 +1770,28 @@ void MainWindow::onConfigRead(uint32_t sn, const QVariantMap& cfg) {
     onLog(sn, "[INFO] UI configuration fully synchronized with device.");
 }
 
+void MainWindow::onPowerZTelemetry(double vbus, double ibus, double vbusAvg, double ibusAvg, double tempC) {
+    double power = vbus * ibus;
+    if (lePzV) lePzV->setText(QString::number(vbus, 'f', 6));
+    if (lePzI) lePzI->setText(QString::number(ibus, 'f', 6));
+    if (lePzP) lePzP->setText(QString::number(power, 'f', 6));
+    if (lePzVAvg) lePzVAvg->setText(QString::number(vbusAvg, 'f', 6));
+    if (lePzIAvg) lePzIAvg->setText(QString::number(ibusAvg, 'f', 6));
+    if (lePzTemp) lePzTemp->setText(QString::number(tempC, 'f', 2));
+    if (lblPzStatus && lblPzStatus->text() != "Power-Z: 已连接") {
+        lblPzStatus->setText("Power-Z: 已连接");
+        lblPzStatus->setStyleSheet("border: none; color: #198754; font-size: 8pt; font-weight: bold;");
+    }
+    QJsonObject pz;
+    pz["type"] = "powerz";
+    pz["vbus_v"] = vbus;
+    pz["ibus_a"] = ibus;
+    pz["vbus_avg_v"] = vbusAvg;
+    pz["ibus_avg_a"] = ibusAvg;
+    pz["power_w"] = power;
+    pz["temp_c"] = tempC;
+    ipcBroadcast(pz);
+}
 void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
     if (sn != cmbActiveProbe->currentData().toUInt()) return;
     lastTelemetry[sn] = data;

@@ -31,6 +31,7 @@
 #include <QHash>
 
 #include "DebugWorkers.h"
+#include "PowerZWorker.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -60,6 +61,7 @@ private slots:
     void onMsg(uint32_t sn, const QString& title, const QString& text);
     void onAutoTestRes(uint32_t sn, bool success, const QString& msg);
     void onConfigRead(uint32_t sn, const QVariantMap& cfg);
+    void onPowerZTelemetry(double vbus, double ibus, double vbusAvg, double ibusAvg, double tempC);
 
     void onMemRead();
     void onMemWrite();
@@ -178,6 +180,16 @@ private:
     QChartView *viewVBatt = nullptr;
     QChartView *viewLux = nullptr;
     QChartView *viewPwmBrt = nullptr;
+
+    /* Power-Z KM003C 真实电压电流计 */
+    PowerZWorker *pzWorker = nullptr;
+    QLabel *lblPzStatus = nullptr;
+    QLineEdit *lePzV = nullptr;
+    QLineEdit *lePzI = nullptr;
+    QLineEdit *lePzP = nullptr;
+    QLineEdit *lePzTemp = nullptr;
+    QLineEdit *lePzVAvg = nullptr;
+    QLineEdit *lePzIAvg = nullptr;
 
     /* 本地 IPC 调试接口 (127.0.0.1:7345, JSON 行协议) */
     QTcpServer *ipcServer = nullptr;

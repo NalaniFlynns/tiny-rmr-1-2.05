@@ -1,4 +1,9 @@
-﻿# tiny-rmr-1-2.05 — RMR 智能照明控制项目
+﻿## 更新记录（2026-08-10，调试器：接入 Power-Z KM003C 真实电压电流计）
+- **硬件接入**：RMRDebugger 新增 Power-Z KM003C（VID 0x5FC9 / PID 0x0063）真实电压电流计支持，通过 Windows HID 接口（Basic Mode，免驱动）以 200ms 间隔轮询 ADC（GetData 0x0C → PutData 0x41，44 字节 AdcDataRaw）
+- **遥测显示**：监视器固定长条新增一行 6 位小数实时数据：真实电压 V / 真实电流 A / 实时功耗 W（=V×I）/ 平均电压 V / 平均电流 A / 温度 °C；连接状态实时指示（绿=已连接，红=断开，拔插自动重连）
+- **IPC 扩展**：新增 `{"type":"powerz", ...}` 广播帧（`vbus_v` / `ibus_a` / `vbus_avg_v` / `ibus_avg_a` / `power_w` / `temp_c`），`hello` 响应新增 `powerz` 字段（含 connected 与最新值），供外部工具与自动化直接读取
+- **新增源码**：`firmware/RMRDebugger/PowerZWorker.{h,cpp}`（HID 枚举/读写/解析/重连），CMake 链接 `hid`/`setupapi`
+# tiny-rmr-1-2.05 — RMR 智能照明控制项目
 
 基于 **TI MSPM0C1104**（Cortex-M0+）的低功耗智能照明/测试设备完整项目，包含：
 

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+﻿cmake_minimum_required(VERSION 3.16)
 project(rmrdebuger VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -15,6 +15,7 @@ qt_add_executable(rmrdebuger WIN32
     main.cpp
     MainWindow.cpp MainWindow.h
     DebugWorkers.cpp DebugWorkers.h   # 【关键修改 2】删掉JLinkWorker，换成新的双擎类
+    PowerZWorker.cpp PowerZWorker.h   # Power-Z KM003C 真实电压电流计 (HID)
     app.rc
     res.qrc
 )
@@ -22,4 +23,5 @@ qt_add_executable(rmrdebuger WIN32
 # 【关键修改 3】在这里也加上 Qt6::SerialPort 和 Qt6::Network
 target_link_libraries(rmrdebuger PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Sql Qt6::Charts Qt6::SerialPort Qt6::Network
+    hid setupapi
 )
