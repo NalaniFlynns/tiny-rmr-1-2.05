@@ -1,4 +1,4 @@
-#include "nvm_flash.h"
+﻿#include "nvm_flash.h"
 #include "app_config.h"
 #include <ti/driverlib/dl_flashctl.h>
 #include <ti/driverlib/dl_wwdt.h>
@@ -32,8 +32,8 @@ static void load_factory_defaults(void) {
     sys_memory.magic = NVM_MAGIC;
     sys_memory.seq_id = 0;
     sys_memory.features = DEFAULT_FEATURE_FLAGS;
-    sys_memory.r_base = R_DYNAMIC_BASE_MOHM;                 
-    sys_memory.r_series = HW_SERIES_R_MOHM;           
+    sys_memory.r_base = CFG_DEFAULT_R_BASE_MOHM;                 
+    sys_memory.r_series = CFG_DEFAULT_R_SERIES_MOHM;           
     sys_memory.v_led_fw = HW_LED_FORWARD_V_MV;             
     sys_memory.i_max_ua = HW_LED_MAX_CURRENT_UA;            
     sys_memory.batt_p_uw = BATT_MAX_DISCHARGE_UW;            

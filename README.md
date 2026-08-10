@@ -1,4 +1,9 @@
-﻿## 更新记录（2026-08-10，调试器：接入 Power-Z KM003C 真实电压电流计）
+﻿## 更新记录（2026-08-10，固件 V4.3.1 双版本：直连 / 2xSR516SW 电池）
+- **双版本编译**：`app_config.h` 新增编译期电源模式宏 `POWER_SOURCE_DIRECT`——`1`=稳压电源直连版（1.6-3.6V 可调电源 + 120-635Ω 可调限流电阻，不算电池内阻），`0`=电池版（2x SR516SW 串联 3.1V 标称，计入电池内阻）
+- **产物**：`firmware/RMR/hex/RMR_DIRECT.hex`（版本串 `V4.3.1_DIRECT`）、`firmware/RMR/hex/RMR_BATT.hex`（版本串 `V4.3.1_BATT`）；出厂默认 `r_series`：直连=360000mΩ（限流电阻），电池=410000mΩ（360Ω 限流 + 2×25Ω 电池内阻，SR516SW 规格书未标注内阻，取氧化银纽扣电池典型值，可经调试器写 NVM `r_series` 校准）
+- **器件规格核对**：LED=APTD1608SECK/J4-PF（超亮橙 AlGaInP，VF 2.2V 典型/2.8V max @20mA，IF DC 30mA max）——固件 `HW_LED_FORWARD_V_MV=2200`、`HW_LED_MAX_CURRENT_UA=2800` 与规格书一致；电池=SR516SW（1.55V、12.5mAh、标准放电 20µA）；MCU=MSPM0C1104（Cortex-M0+，10-bit ADC，1.4V 内部 VREF，无 SysTick 用 GPTIMER14）
+- **注意**：升级烧录后若 NVM 已有旧配置，`r_series` 等参数保留旧值；需"恢复出厂"或调试器写入以应用新默认参数
+## 更新记录（2026-08-10，调试器：接入 Power-Z KM003C 真实电压电流计）
 - **硬件接入**：RMRDebugger 新增 Power-Z KM003C（VID 0x5FC9 / PID 0x0063）真实电压电流计支持，通过 Windows HID 接口（Basic Mode，免驱动）以 200ms 间隔轮询 ADC（GetData 0x0C → PutData 0x41，44 字节 AdcDataRaw）
 - **遥测显示**：监视器固定长条新增一行 6 位小数实时数据：真实电压 V / 真实电流 A / 实时功耗 W（=V×I）/ 平均电压 V / 平均电流 A / 温度 °C；连接状态实时指示（绿=已连接，红=断开，拔插自动重连）
 - **IPC 扩展**：新增 `{"type":"powerz", ...}` 广播帧（`vbus_v` / `ibus_a` / `vbus_avg_v` / `ibus_avg_a` / `power_w` / `temp_c`），`hello` 响应新增 `powerz` 字段（含 connected 与最新值），供外部工具与自动化直接读取

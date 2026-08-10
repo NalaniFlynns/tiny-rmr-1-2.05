@@ -5,7 +5,25 @@
 #include <stdbool.h>
 
 /* ==================== 固件信息 ==================== */
-#define FW_VERSION_STR "V4.3.1_PROD"
+/* ==================== 固件信息 ==================== */
+/* 电源模式(编译期):
+   POWER_SOURCE_DIRECT = 1 -> 稳压电源直连版: 1.6-3.6V 可调电源 + 120-635Ω 可调限流电阻, 不算电池内阻
+   POWER_SOURCE_DIRECT = 0 -> 电池版: 2x SR516SW 串联(3.1V 标称, 12.5mAh/节), 计入电池内阻 */
+#ifndef POWER_SOURCE_DIRECT
+#define POWER_SOURCE_DIRECT 1
+#endif
+
+/* SR516SW 单节内阻(mΩ): 规格书未标注, 取氧化银纽扣电池典型值, 可经调试器写 NVM r_series 校准 */
+#define BATT_SR516SW_SINGLE_R_MOHM  25000
+
+#if POWER_SOURCE_DIRECT
+#define FW_VERSION_STR "V4.3.1_DIRECT"
+#define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
+#else
+#define FW_VERSION_STR "V4.3.1_BATT"
+#define CFG_DEFAULT_R_SERIES_MOHM   (HW_SERIES_R_MOHM + 2 * BATT_SR516SW_SINGLE_R_MOHM)
+#endif
+#define CFG_DEFAULT_R_BASE_MOHM     R_DYNAMIC_BASE_MOHM
 
 /* ==================== [0] 出厂默认配置 ==================== */
 #define DEV_FORCE_FACTORY_RESET         0       /* 1: 每次上电强制恢复出厂并保存 */
