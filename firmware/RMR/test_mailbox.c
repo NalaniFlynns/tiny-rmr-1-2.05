@@ -73,7 +73,7 @@ void test_mailbox_task(void) {
     g_test_box.nvm_sector_addr = nvm_get_sector_addr();
     g_test_box.nvm_slot_idx = nvm_get_slot_idx();
 
-    if (auth_ok && sys_state != SYS_TEST_MODE) {
+    if (auth_ok && sys_state != SYS_TEST_MODE && sys_state != SYS_OFF) {
         test_mode_active = true;
         sys_state = SYS_TEST_MODE;
         opt3001_init();
@@ -180,7 +180,7 @@ void test_mailbox_task(void) {
     }
 
     /* 正常退出测试模式 -> SYS_FLASH_MODE */
-    if (test_mode_active && sys_state != SYS_TEST_MODE) {
+    if (test_mode_active && sys_state != SYS_TEST_MODE && sys_state != SYS_OFF) {
         test_mode_active = false;
         sys_state = SYS_FLASH_MODE;
         g_test_box.ovr_led_mode = 0;
