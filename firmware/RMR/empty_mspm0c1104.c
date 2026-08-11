@@ -56,6 +56,23 @@ static void tick_timer_init(void) {
     DL_TimerG_startCounter(TIMG14);
 }
 
+#if POWER_SAVE_BUILD
+/* ECO 动态降频: 非运行态(关机/FLASH) SYSOSC 切 4MHz 低功耗模式, 运行态恢复 24MHz;
+   GPTIMER14 同步重配 LOAD, g_tick_ms 恒为真实 1ms(按键/超时/轮询计时不变) */
+static void sysclk_set_freq(bool high) {
+    DL_TimerG_stopCounter(TIMG14);
+    if (high) {
+        DL_SYSCTL_setSYSOSCFreq(DL_SYSCTL_SYSOSC_FREQ_BASE);
+        DL_TimerG_setLoadValue(TIMG14, CPUCLK_FREQ / 1000u - 1u);
+    } else {
+        DL_SYSCTL_setSYSOSCFreq(DL_SYSCTL_SYSOSC_FREQ_4M);
+        DL_TimerG_setLoadValue(TIMG14, 4000000u / 1000u - 1u);
+    }
+    delay_cycles(1000);   /* 等 SYSOSC gear shift 稳定 */
+    DL_TimerG_startCounter(TIMG14);
+}
+#endif
+
 void TIMG14_IRQHandler(void) {
     DL_TimerG_clearInterruptStatus(TIMG14, DL_TIMER_INTERRUPT_ZERO_EVENT);
     g_tick_ms++;
@@ -104,6 +121,11 @@ static void update_debug_string(void) {
 int main(void) {
     SYSCFG_DL_init();
     __enable_irq();
+#if POWER_SAVE_BUILD
+    /* ECO: 启动后先断 ADC/VREF 寄存器电源域, 首次采样/开机测压前再上电(配置保持, 仅门控) */
+    DL_ADC12_disablePower(HW_ADC_INST);
+    DL_VREF_disablePower(VREF);
+#endif
 
     tick_timer_init();  /* GPTIMER14 1ms 硬件时基 (MSPM0C1104 无硬件 SysTick) */
     
@@ -143,6 +165,18 @@ int main(void) {
         __WFI();   /* 省电版: 睡眠等待 GPTIMER14 1ms tick 中断唤醒, 替代 24MHz 忙等 */
 #else
         delay_cycles(CPU_CYCLES_PER_MS);
+#endif
+
+#if POWER_SAVE_BUILD
+        /* ECO 动态降频: 运行态 24MHz, 关机/FLASH 态 SYSOSC 4MHz */
+        {   static uint8_t sysclk_high = 1;
+            bool want_high = (sys_state == SYS_RUN || sys_state == SYS_LVP_CRIT ||
+                              sys_state == SYS_ALS_ERR || sys_state == SYS_TEST_MODE);
+            if (want_high != (sysclk_high != 0)) {
+                sysclk_high = want_high ? 1 : 0;
+                sysclk_set_freq(want_high);
+            }
+        }
 #endif
 
         DL_WWDT_restart(WWDT0_INST);
@@ -218,7 +252,7 @@ int main(void) {
             if (key == EVT_BT1_SHORT_0_8S && !g_flash_mode_used) {
                 if (g_vbatt_mv_filtered >= sys_memory.lvp_ext) {   /* 测压达标才进入 Flash 模式 */
                     g_flash_mode_used = true;
-                    flash_mode_tick = 0;
+                    flash_mode_tick = g_tick_ms;   /* 起始 tick(差值比较防回绕) */
                     sys_state = SYS_FLASH_MODE;
                     led_blink_twice(); 
 #if FEATURE_RESTORE_NRST_IN_FLASH
@@ -286,6 +320,13 @@ int main(void) {
                 sys_memory.params &= ~(1 << 8);
                 nvm_mark_dirty();
                 nvm_save_dirty();
+#if FEATURE_ALS_MODE
+                /* 连续多次自恢复后锁定 ALS: 防传感器持续损坏时每 10s 闪一次循环 */
+                if (++g_als_err_recover_cnt >= ALS_ERR_LOCKOUT_COUNT) {
+                    g_als_err_recover_cnt = 0;
+                    g_als_err_lockout = true;
+                }
+#endif
                 uint8_t lvl = sys_memory.params & 0xFF;
                 led_set_target(battery_get_safe_brt(CFG_BRT_MAP[lvl]), false);
             } else {
@@ -309,7 +350,7 @@ int main(void) {
                     led_set_target(0, false); led_update_task();
                 }
             } else {
-                if (++flash_mode_tick > TIME_FLASH_MODE_TIMEOUT_MS) NVIC_SystemReset();
+                if (g_tick_ms - flash_mode_tick > TIME_FLASH_MODE_TIMEOUT_MS) NVIC_SystemReset();
             }
         }
         else if (sys_state == SYS_TEST_MODE && g_test_box.magic == 0x54455354) {

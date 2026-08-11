@@ -1,4 +1,4 @@
-﻿#include "sys_mode.h"
+#include "sys_mode.h"
 #include "sys_led_pwm.h"
 #include "sys_battery.h"
 #include "hal_opt3001.h"
@@ -178,15 +178,21 @@ void mode_handle_key(KeyEvent_t evt) {
     }
     else if (evt == EVT_BOTH_LONG_5S) { 
 #if FEATURE_ALS_MODE
-        g_is_als_mode = !g_is_als_mode;
-        led_blink_twice();
-        if (g_is_als_mode) { opt3001_trigger_conversion(); als_tick = g_tick_ms; }
+        if (g_als_err_lockout) {
+            /* 传感器持续故障已锁定: 拒绝切回 ALS, 闪灯提示 */
+            led_blink_twice();
+        } else {
+            g_is_als_mode = !g_is_als_mode;
+            led_blink_twice();
+            if (g_is_als_mode) { opt3001_trigger_conversion(); als_tick = g_tick_ms; }
+        }
 #endif
     }
 
     if (evt != EVT_NONE) {
         sys_memory.params = (off_idx << 16) | (g_is_als_mode << 8) | lvl;
+        /* 延迟保存: 只置 dirty 交给后台 30s 自动保存(省 FLASH 磨损);
+           关机/LVP/掉电路径仍强制 nvm_save_dirty() */
         nvm_mark_dirty();
-        nvm_save_dirty(); 
     }
 }

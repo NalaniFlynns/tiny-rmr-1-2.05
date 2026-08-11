@@ -1,3 +1,11 @@
+## 更新记录（2026-08-11，固件 V4.3.3 优化：ECO 动态降频 + NVM 磨损 + ALS 故障锁 + 杂项）
+- **ECO 动态降频**：关机/FLASH 态 SYSOSC 切 4MHz 低功耗模式（24MHz→4MHz，睡眠电流大幅下降），开机/运行态自动恢复 24MHz；GPTIMER14 同步重配 LOAD，`g_tick_ms` 恒为真实 1ms（按键 1.5s/5s、FLASH 5min 超时、轮询计时全部不受影响）
+- **NVM 磨损优化**：按键调档/模式切换不再立即写 FLASH，只置 dirty 交给 30s 后台自动保存（连按调档只记一次）；关机/LVP/掉电强制保存路径保留
+- **ALS 故障锁**：连续 `ALS_ERR_LOCKOUT_COUNT`(3) 次 10s 自恢复后锁定 ALS——拒绝再切回（双键 5s 闪灯提示），防止传感器持续损坏时每 10s 闪一次死循环；重启/恢复出厂解除
+- **启动延迟**：ECO 启动后先断 ADC/VREF 寄存器电源域，首次采样/开机测压前再上电；VREF 内部基准采样间隙关闭（`DL_VREF_enable/disableInternalRef` 门控，battery_startup_check/resume 同步）
+- **flash 超时差值**：FLASH 模式 5min 超时改 `g_tick_ms` 差值比较（原累加计数，防 49.7 天回绕）
+- **验证**：DIRECT / BATT / ECO_D / ECO_B 四变体 0 错误 0 警告；未烧录
+
 ## 更新记录（2026-08-11，固件 V4.3.3 省电版 ECO：关闭一切非必要开销，未烧录仅编译验证）
 - **新增省电编译宏 `POWER_SAVE_BUILD`**（`app_config.h`，默认 0，与 `POWER_SOURCE_DIRECT` 正交）：1=省电版，版本串 `V4.3.3_ECO_D`（直连）/ `V4.3.3_ECO_B`（电池）
 - **省电措施**：主循环 24MHz 忙等改 `__WFI()` 睡眠等待 1ms tick 中断（GPTIMER14 唤醒）；调试箱 `test_mailbox_task` 每 tick 实时刷新整体关闭（GPIO 读/64 位乘除/镜像同步/诊断计算）；ADC/VREF 采样间隙断电、采样间隔 500ms（原 100ms，LVP 去抖 5 次约 2.5s 响应）；OPT3001 手动模式与 OFF 态发 shutdown 配置（0.4µA 级，原连续转换约 1.8µA）；ALS 轮询 1s（原 120ms，转换占空比约 10%）；LED 亮度/状态未变化时不重算 PWM（原每 tick 64 位乘除+写寄存器）；出厂默认清 SWD 保活位 -> OFF 态进 STANDBY0 深睡（µA 级）

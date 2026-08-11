@@ -187,6 +187,7 @@
 #define TIME_ALS_POLL_INTERVAL_MS   120
 #endif
 #define ALS_ERR_FAIL_COUNT      3
+#define ALS_ERR_LOCKOUT_COUNT  3    /* 连续 N 次 ALS 故障自恢复后锁定 ALS, 防传感器持续损坏时每 10s 闪一次循环 */
 #define TIME_ALS_ERR_RECOVER_MS     10000
 #define ALS_ERR_BLINK_PERIOD_MS     1500
 #define ALS_ERR_BLINK_ON_MS         600

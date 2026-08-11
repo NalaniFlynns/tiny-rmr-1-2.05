@@ -6,6 +6,8 @@ volatile uint32_t g_als_lux_filtered = 0;
 volatile uint8_t  g_als_sensor_status = 1;   /* 初始: ALS 未启用 */
 volatile uint8_t  g_als_err_cnt = 0;
 volatile uint32_t g_als_err_start_tick = 0;
+volatile uint8_t  g_als_err_recover_cnt = 0;
+volatile bool     g_als_err_lockout = false;
 
 #define I2C_SCL_HIGH()  DL_GPIO_disableOutput(PORT_I2C, PIN_SW_SCL)
 #define I2C_SCL_LOW()   do { DL_GPIO_clearPins(PORT_I2C, PIN_SW_SCL); DL_GPIO_enableOutput(PORT_I2C, PIN_SW_SCL); } while(0)

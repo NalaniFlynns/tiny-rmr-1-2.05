@@ -22,6 +22,7 @@ void battery_task(void) {
 #if POWER_SAVE_BUILD
             /* 省电版: 采样前才给 VREF/ADC 上电(原常开), 采完即断 */
             DL_VREF_enablePower(VREF);
+            DL_VREF_enableInternalRef(VREF);   /* VREF 基准采样前开启 */
             DL_ADC12_enablePower(HW_ADC_INST);
             delay_cycles(CPU_CYCLES_PER_MS * 5);
 #endif
@@ -42,6 +43,7 @@ void battery_task(void) {
             else { g_vbatt_mv_filtered = g_vbatt_mv_filtered - (g_vbatt_mv_filtered >> ADC_FILTER_SHIFT) + (mv >> ADC_FILTER_SHIFT); }
             is_converting = false;
 #if POWER_SAVE_BUILD
+            DL_VREF_disableInternalRef(VREF);   /* VREF 基准采样后关闭 */
             DL_ADC12_disablePower(HW_ADC_INST);
             DL_VREF_disablePower(VREF);
 #endif
@@ -49,6 +51,7 @@ void battery_task(void) {
             DL_ADC12_clearInterruptStatus(HW_ADC_INST, DL_ADC12_INTERRUPT_MEM0_RESULT_LOADED);
             is_converting = false;
 #if POWER_SAVE_BUILD
+            DL_VREF_disableInternalRef(VREF);   /* VREF 基准采样后关闭 */
             DL_ADC12_disablePower(HW_ADC_INST);
             DL_VREF_disablePower(VREF);
 #endif
@@ -161,6 +164,7 @@ uint16_t battery_brt_to_pwm(uint16_t brt) {
 
 bool battery_startup_check(void) {
     DL_VREF_enablePower(VREF);
+    DL_VREF_enableInternalRef(VREF);
     DL_ADC12_enablePower(HW_ADC_INST);
     delay_cycles(CPU_CYCLES_PER_MS * 5); 
     DL_ADC12_clearInterruptStatus(HW_ADC_INST, 0xFFFFFFFF);
@@ -180,6 +184,7 @@ bool battery_startup_check(void) {
 
 void battery_resume(void) {
     DL_VREF_enablePower(VREF);
+    DL_VREF_enableInternalRef(VREF);
     DL_ADC12_enablePower(HW_ADC_INST);
     delay_cycles(CPU_CYCLES_PER_MS * 5); 
     DL_ADC12_clearInterruptStatus(HW_ADC_INST, 0xFFFFFFFF);

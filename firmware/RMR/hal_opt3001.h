@@ -8,6 +8,8 @@ extern volatile uint32_t g_als_lux_filtered;
 extern volatile uint8_t  g_als_sensor_status;   /* 0=正常 1=未启用 2=故障 */
 extern volatile uint8_t  g_als_err_cnt;
 extern volatile uint32_t g_als_err_start_tick;
+extern volatile uint8_t  g_als_err_recover_cnt;  /* ALS_ERR 自恢复次数(连续) */
+extern volatile bool     g_als_err_lockout;       /* 连续 ALS_ERR_LOCKOUT_COUNT 次后锁定: 拒绝切回 ALS */
 
 void opt3001_init(void);
 void opt3001_trigger_conversion(void);
