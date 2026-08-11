@@ -286,7 +286,20 @@ int main(void) {
             }
         }
         else if (sys_state == SYS_FLASH_MODE) {
-            if (++flash_mode_tick > TIME_FLASH_MODE_TIMEOUT_MS) NVIC_SystemReset();
+            if (key == EVT_BOTH_LONG_1_5S) {
+                /* FLASH 模式长按双键 1.5s 也可正常开机(测压达标才启动, 与 OFF 态一致) */
+                if (battery_startup_check()) {
+                    sys_state = SYS_RUN;
+                    g_inactivity_sec = 0;
+                    g_is_dimmed = false;
+                    mode_init();
+                } else {
+                    led_set_target(100, false); led_update_task(); delay_cycles(CPU_CYCLES_PER_MS * STARTUP_FAIL_BLINK_DELAY_MS);
+                    led_set_target(0, false); led_update_task();
+                }
+            } else {
+                if (++flash_mode_tick > TIME_FLASH_MODE_TIMEOUT_MS) NVIC_SystemReset();
+            }
         }
         else if (sys_state == SYS_TEST_MODE && g_test_box.magic == 0x54455354) {
             if (g_test_box.ovr_led_mode == 1) {

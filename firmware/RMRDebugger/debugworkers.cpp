@@ -270,6 +270,7 @@ void BaseWorker::pollTelemetryGeneric() {
     map["ovr_pwm"] = *(uint16_t*)(data + OFS_OVR_PWM_VAL);
     map["ovr_lux"] = *(uint32_t*)(data + OFS_OVR_ALS_LUX);
     map["cfg_params"] = *(uint32_t*)(data + OFS_CFG_PARAMS);
+    map["cfg_features"] = *(uint32_t*)(data + OFS_CFG_FEATURES);
     map["fw_ver"] = QString::fromUtf8((const char*)(data + OFS_FW_VER_STR)).trimmed();
     emit sigTelemetry(probeSN, map);
 }
