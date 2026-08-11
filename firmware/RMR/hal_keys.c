@@ -1,4 +1,4 @@
-﻿#include "hal_keys.h"
+#include "hal_keys.h"
 #include "app_config.h"
 #include "test_mailbox.h"
 
@@ -53,7 +53,7 @@ KeyEvent_t keys_task(void) {
             both_handled_5s = false;
         } else {
             uint32_t dur = g_tick_ms - both_down_tick;
-            if (sys_state == SYS_OFF && dur >= KEY_TIME_LONG_PRESS_MS && !both_handled_1_5s) {
+            if (dur >= KEY_TIME_LONG_PRESS_MS && !both_handled_1_5s) {
                 both_handled_1_5s = true;
                 evt = EVT_BOTH_LONG_1_5S;
             }

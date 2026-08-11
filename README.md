@@ -1,3 +1,8 @@
+## 更新记录：2026-08-11，按键交互调整：双键长按 1.5s 立即熄灯 / 5s 转 ALS 亮灯 / 中途松开关机
+- **RUN/LVP 态按住双键**：1.5s 到点**立即熄灯**（无需松开），进入 OFF；继续按住到 5s → 闪烁提示（led_blink_twice）并**以 ALS 模式开机**（测压达标才启动，强制写入 ALS 标志并落盘）；1.5s~5s 之间松开 → 保持关机
+- **实现**：`hal_keys.c` 1.5s 事件由"仅 OFF 态按住触发"改为全状态按住触发（RUN 态立即响应熄灯）；`empty_mspm0c1104.c` OFF 态新增 `EVT_BOTH_LONG_5S` 分支（闪烁 + ALS 开机）
+- **保持原行为**：OFF 态双键 1.5s 开机、RUN 态 5s 模式切换（ALS<->手动，TEST 态同）、FLASH 模式单键 0.8s 进入、调试器恢复出厂指令均不变
+- **验证**：DEBUG_LP_BUILD / DEBUG_BUILD / 默认三配置 0 错误 0 警告；`firmware/RMR/hex/RMR_DBGL.hex`（V4.3.3_DBGL）已更新
 ## 更新记录：2026-08-11，固件深睡唤醒修复（STANDBY0 按键唤醒/进入 standby 概率性问题）
 - **根因 1：WWDT 深睡复位**：WWDT 由 LFCLK 驱动，`DL_WWDT_STOP_IN_SLEEP` 只覆盖 SLEEP 模式；进入 STANDBY0 后 LFCLK 继续运行，500ms 看门狗因主循环停摆而超时 → 每 500ms 周期性 SYSRST，导致"有概率无法进入 standby"且按键唤醒被复位窗口吞掉。修复：进入 STANDBY0 前将 WWDT 周期临时拉伸到最大（PER_EN_25 + CLKDIV /8 ≈ 8192s），唤醒后立即恢复 500ms 配置并喂狗
 - **根因 2：唤醒源只配了 GPIO 边沿中断**：STANDBY0 深睡下边沿中断依赖 ULPCLK 采样，按下瞬间易被丢失。修复：新增 IOMUX IO 唤醒（`DL_GPIO_setWakeupCompareValue` + `DL_GPIO_enableWakeUp`，WCOMP 匹配高电平、按键按下拉低即异步唤醒），GPIO 边沿中断保留作双保险；唤醒后 `DL_GPIO_disableWakeUp` 清理

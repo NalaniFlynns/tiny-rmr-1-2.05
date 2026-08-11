@@ -282,6 +282,21 @@ int main(void) {
                     led_set_target(0, false); led_update_task();
                 }
             }
+            else if (key == EVT_BOTH_LONG_5S) {
+                /* RUN 1.5s 已熄灯后继续按满 5s: 闪烁提示并以 ALS 模式开机(测压达标才启动);
+                   1.5s~5s 之间松开则保持关机(无事件, 直接 OFF) */
+                led_blink_twice();
+                if (battery_startup_check()) {
+                    sys_state = SYS_RUN;
+                    g_inactivity_sec = 0;
+                    g_is_dimmed = false;
+                    g_is_als_mode = true;
+                    sys_memory.params |= (1 << 8);
+                    nvm_mark_dirty();
+                    nvm_save_dirty();
+                    mode_init();
+                }
+            }
 
 #if DEBUG_BUILD
             /* DEBUG build: skip OFF deep sleep (busy loop), SWD always on */
