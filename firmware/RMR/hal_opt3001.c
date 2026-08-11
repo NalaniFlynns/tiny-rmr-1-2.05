@@ -46,6 +46,20 @@ void opt3001_init(void) {
     I2C_SDA_HIGH(); I2C_SCL_HIGH();
 }
 
+/* 省电版: 传感器电源管理(幂等, 仅状态变化时发一次 I2C 写)
+   shutdown(CONFIG=0x0000) 约 0.4uA; 连续转换(0xC210) 100ms 周期约 1.8uA */
+static bool sensor_enabled = true;
+void opt3001_set_enabled(bool on) {
+    if (on == sensor_enabled) return;
+    sensor_enabled = on;
+    i2c_start();
+    i2c_write_byte(OPT3001_ADDR << 1);
+    i2c_write_byte(OPT3001_REG_CONFIG);
+    i2c_write_byte(on ? OPT3001_CFG_HI : 0x00);
+    i2c_write_byte(on ? OPT3001_CFG_LO : 0x00);
+    i2c_stop();
+}
+
 void opt3001_trigger_conversion(void) {
     i2c_start(); 
     i2c_write_byte(OPT3001_ADDR << 1); 

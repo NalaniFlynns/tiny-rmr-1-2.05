@@ -73,6 +73,7 @@ void GPIOA_IRQHandler(void) {
     DL_GPIO_clearInterruptStatus(PORT_BTN, PIN_BT1 | PIN_BT2);
 }
 
+#if !POWER_SAVE_BUILD
 static void append_str(const char* s) { while (*s && str_idx < 63) { g_debug_str[str_idx++] = *s++; } }
 static void append_int(uint32_t val, uint8_t min_digits) {
     char temp[12]; int i = 0;
@@ -98,6 +99,7 @@ static void update_debug_string(void) {
 
     while (str_idx < 63) { g_debug_str[str_idx++] = ' '; } g_debug_str[63] = '\0';
 }
+#endif
 
 int main(void) {
     SYSCFG_DL_init();
@@ -137,7 +139,11 @@ int main(void) {
 #endif
 
     while (1) {
+#if POWER_SAVE_BUILD
+        __WFI();   /* 省电版: 睡眠等待 GPTIMER14 1ms tick 中断唤醒, 替代 24MHz 忙等 */
+#else
         delay_cycles(CPU_CYCLES_PER_MS);
+#endif
 
         DL_WWDT_restart(WWDT0_INST);
 
@@ -145,7 +151,9 @@ int main(void) {
         battery_task();
         test_mailbox_task(); 
         
+#if !POWER_SAVE_BUILD
         if (g_tick_ms % 100 == 0) update_debug_string();
+#endif
         
         /* 掉电保护: 保存配置后进 SHUTDOWN */
         if (g_vbatt_mv_raw < BATT_POWER_LOSS_MV) {
@@ -203,6 +211,9 @@ int main(void) {
 
         if (sys_state == SYS_OFF) {
             led_set_target(0, false);
+#if POWER_SAVE_BUILD
+            opt3001_set_enabled(false);   /* 省电版: OFF 态关 ALS 传感器(shutdown, 幂等) */
+#endif
             
             if (key == EVT_BT1_SHORT_0_8S && !g_flash_mode_used) {
                 if (g_vbatt_mv_filtered >= sys_memory.lvp_ext) {   /* 测压达标才进入 Flash 模式 */

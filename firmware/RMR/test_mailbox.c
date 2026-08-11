@@ -1,4 +1,4 @@
-﻿#include "test_mailbox.h"
+#include "test_mailbox.h"
 #include "app_config.h"
 #include "nvm_flash.h"
 #include "sys_battery.h"
@@ -11,8 +11,11 @@ volatile Test_Mailbox_t g_test_box __attribute__((used)) = {
     .magic = 0, .version = 0x0100, .fw_version_str = FW_VERSION_STR
 };
 
+#if !POWER_SAVE_BUILD
 static bool test_mode_active = false;
+#endif
 
+#if !POWER_SAVE_BUILD
 static void test_box_sync_cfg(void) {
     g_test_box.cfg_params = sys_memory.params;
     g_test_box.cfg_features = sys_memory.features;
@@ -28,7 +31,9 @@ static void test_box_sync_cfg(void) {
     g_test_box.cfg_als_cap_low_x100 = sys_memory.als_cap_low_x100;
     g_test_box.cfg_als_cap_high_x100 = sys_memory.als_cap_high_x100;
 }
+#endif
 void test_mailbox_task(void) {
+#if !POWER_SAVE_BUILD
     bool auth_ok = (g_test_box.magic == TEST_MAGIC && g_test_box.host_version == g_test_box.version);
 
     /* ===== 实时监视器刷新(每 tick) ===== */
@@ -185,4 +190,5 @@ void test_mailbox_task(void) {
         g_test_box.ovr_block_phys_keys = 0;
         g_test_box.cmd_ack = 0;
     }
+#endif
 }

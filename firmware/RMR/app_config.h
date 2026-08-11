@@ -12,16 +12,32 @@
 #ifndef POWER_SOURCE_DIRECT
 #define POWER_SOURCE_DIRECT 1
 #endif
+/* 省电版(ECO): 1=关闭一切非必要开销(生产电池供电):
+   WFI 睡眠替代 24MHz 忙等 / 关闭调试箱每 tick 实时刷新 / ADC+VREF 采样间隙断电 /
+   OPT3001 手动模式与 OFF 态 shutdown / ALS 与 ADC 轮询降频 / 出厂默认 OFF 态进 STANDBY0 深睡 */
+#ifndef POWER_SAVE_BUILD
+#define POWER_SAVE_BUILD 0
+#endif
 
 /* SR516SW 单节内阻(mΩ): 规格书未标注, 取氧化银纽扣电池典型值, 可经调试器写 NVM r_series 校准 */
 #define BATT_SR516SW_SINGLE_R_MOHM  25000
 
+#if POWER_SAVE_BUILD
+#if POWER_SOURCE_DIRECT
+#define FW_VERSION_STR "V4.3.3_ECO_D"
+#define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
+#else
+#define FW_VERSION_STR "V4.3.3_ECO_B"
+#define CFG_DEFAULT_R_SERIES_MOHM   (HW_SERIES_R_MOHM + 2 * BATT_SR516SW_SINGLE_R_MOHM)
+#endif
+#else
 #if POWER_SOURCE_DIRECT
 #define FW_VERSION_STR "V4.3.3_DIRECT"
 #define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
 #else
 #define FW_VERSION_STR "V4.3.3_BATT"
 #define CFG_DEFAULT_R_SERIES_MOHM   (HW_SERIES_R_MOHM + 2 * BATT_SR516SW_SINGLE_R_MOHM)
+#endif
 #endif
 #define CFG_DEFAULT_R_BASE_MOHM     R_DYNAMIC_BASE_MOHM
 
@@ -70,7 +86,12 @@
     (FEATURE_SWD_IN_OFF_STATE ? FLAG_SWD_IN_OFF_STATE : 0) | \
     (FEATURE_AUTO_POWER_ON ? FLAG_AUTO_POWER_ON : 0))
 
+#if POWER_SAVE_BUILD
+/* 省电版: 出厂默认清 SWD 保活位 -> OFF 态进 STANDBY0 深睡(µA 级), 代价是 OFF 态 SWD 不可访问 */
+#define DEFAULT_FEATURE_FLAGS (FEATURE_RUNTIME_MASK & ~FLAG_SWD_IN_OFF_STATE)
+#else
 #define DEFAULT_FEATURE_FLAGS (FEATURE_RUNTIME_MASK)
+#endif
 
 /* ==================== [3] 硬件引脚分配 ==================== */
 #define PORT_I2C                SW_I2C_PORT
@@ -115,7 +136,11 @@
 #define ADC_GAIN_CAL            1000
 #define ADC_TIMEOUT_MS          10
 #define ADC_FILTER_SHIFT        3
+#if POWER_SAVE_BUILD
+#define TIME_ADC_READ_INTERVAL_MS   500   /* 省电版: 500ms(原 100ms), LVP 去抖 5 次 -> ~2.5s 响应 */
+#else
 #define TIME_ADC_READ_INTERVAL_MS   100
+#endif
 #define OPT3001_ADDR            0x44
 #define OPT3001_REG_RESULT       0x00
 #define OPT3001_REG_CONFIG       0x01
@@ -156,7 +181,11 @@
 #define ALS_SQRT_FACTOR         5
 #define ALS_CAP_BRT_LOW_LUX     600
 #define ALS_CAP_BRT_HIGH_LUX    800
+#if POWER_SAVE_BUILD
+#define TIME_ALS_POLL_INTERVAL_MS   1000  /* 省电版: 1s(原 120ms), OPT3001 转换占空比 ~10% */
+#else
 #define TIME_ALS_POLL_INTERVAL_MS   120
+#endif
 #define ALS_ERR_FAIL_COUNT      3
 #define TIME_ALS_ERR_RECOVER_MS     10000
 #define ALS_ERR_BLINK_PERIOD_MS     1500

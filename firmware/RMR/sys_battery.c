@@ -1,4 +1,4 @@
-﻿#include "sys_battery.h"
+#include "sys_battery.h"
 #include "app_config.h"
 
 volatile uint32_t g_vbatt_mv_raw = 3100;
@@ -19,6 +19,12 @@ volatile uint32_t g_safe_brt_out = 0;
 void battery_task(void) {
     if (!is_converting) {
         if (g_tick_ms - adc_tick >= TIME_ADC_READ_INTERVAL_MS) { 
+#if POWER_SAVE_BUILD
+            /* 省电版: 采样前才给 VREF/ADC 上电(原常开), 采完即断 */
+            DL_VREF_enablePower(VREF);
+            DL_ADC12_enablePower(HW_ADC_INST);
+            delay_cycles(CPU_CYCLES_PER_MS * 5);
+#endif
             DL_ADC12_clearInterruptStatus(HW_ADC_INST, 0xFFFFFFFF);
             DL_ADC12_enableConversions(HW_ADC_INST);
             DL_ADC12_startConversion(HW_ADC_INST);
@@ -35,9 +41,17 @@ void battery_task(void) {
             if (first_read) { g_vbatt_mv_filtered = mv; first_read = false; } 
             else { g_vbatt_mv_filtered = g_vbatt_mv_filtered - (g_vbatt_mv_filtered >> ADC_FILTER_SHIFT) + (mv >> ADC_FILTER_SHIFT); }
             is_converting = false;
+#if POWER_SAVE_BUILD
+            DL_ADC12_disablePower(HW_ADC_INST);
+            DL_VREF_disablePower(VREF);
+#endif
         } else if (g_tick_ms - adc_tick > ADC_TIMEOUT_MS) {
             DL_ADC12_clearInterruptStatus(HW_ADC_INST, DL_ADC12_INTERRUPT_MEM0_RESULT_LOADED);
             is_converting = false;
+#if POWER_SAVE_BUILD
+            DL_ADC12_disablePower(HW_ADC_INST);
+            DL_VREF_disablePower(VREF);
+#endif
         }
     }
 }

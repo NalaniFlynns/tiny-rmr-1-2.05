@@ -1,3 +1,10 @@
+## 更新记录（2026-08-11，固件 V4.3.3 省电版 ECO：关闭一切非必要开销，未烧录仅编译验证）
+- **新增省电编译宏 `POWER_SAVE_BUILD`**（`app_config.h`，默认 0，与 `POWER_SOURCE_DIRECT` 正交）：1=省电版，版本串 `V4.3.3_ECO_D`（直连）/ `V4.3.3_ECO_B`（电池）
+- **省电措施**：主循环 24MHz 忙等改 `__WFI()` 睡眠等待 1ms tick 中断（GPTIMER14 唤醒）；调试箱 `test_mailbox_task` 每 tick 实时刷新整体关闭（GPIO 读/64 位乘除/镜像同步/诊断计算）；ADC/VREF 采样间隙断电、采样间隔 500ms（原 100ms，LVP 去抖 5 次约 2.5s 响应）；OPT3001 手动模式与 OFF 态发 shutdown 配置（0.4µA 级，原连续转换约 1.8µA）；ALS 轮询 1s（原 120ms，转换占空比约 10%）；LED 亮度/状态未变化时不重算 PWM（原每 tick 64 位乘除+写寄存器）；出厂默认清 SWD 保活位 -> OFF 态进 STANDBY0 深睡（µA 级）
+- **注意**：烧录省电版后若 NVM 已有旧配置（features=0xFF），OFF 态仍不会进 STANDBY0；需"恢复出厂"或经调试器清 bit6 才生效；省电版 OFF 态 SWD 不可访问（深睡保电），日常调试请用普通版
+- **产物**：`firmware/RMR/hex/RMR_DIRECT_ECO.hex`（`V4.3.3_ECO_D`）、`RMR_BATT_ECO.hex`（`V4.3.3_ECO_B`）；普通版 DIRECT/BATT hex 同步刷新
+- **验证**：DIRECT / BATT / ECO_D / ECO_B 四变体全部 0 错误 0 警告；未烧录（设备仍运行 V4.3.3_DIRECT）
+
 ## 更新记录（2026-08-11，固件 V4.3.3：FLASH 模式长按 1.5s 开机 + 调试器 cfg_features 实时显示）
 - **固件 V4.3.3**：进入 FLASH 模式后双键长按 1.5s 也可正常开机——与 OFF 态一致先 `battery_startup_check()` 测压达标才启动（达标→SYS_RUN+mode_init，不达标→LED 闪 100ms 提示）；FLASH 模式 5 分钟超时自动复位逻辑保留
 - **调试器修复**：telemetry 新增 `cfg_features`（mailbox 偏移 0x78，授权后实时显示 0xFF），修复此前该字段恒为 0 被误判为 features 被清零的问题；实际设备 features 一直是 0xFF（自动开机/无操作调暗/LVP/standby 位全开），OFF 态不进 STANDBY0 保持 SWD 可访问属设计行为（bit6 置位）
