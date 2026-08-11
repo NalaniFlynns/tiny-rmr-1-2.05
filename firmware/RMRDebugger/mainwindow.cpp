@@ -299,6 +299,10 @@ void MainWindow::ipcSendHello(QTcpSocket *s) {
         pz["ibus_a"] = pzWorker->ibus();
         pz["power_w"] = pzWorker->power();
         pz["temp_c"] = pzWorker->tempC();
+        pz["avg_v"] = pzWorker->avgV();
+        pz["avg_a"] = pzWorker->avgI();
+        pz["avg_w"] = pzWorker->avgP();
+        pz["stat_sec"] = pzWorker->statSec();
         hello["powerz"] = pz;
     }
     ipcSend(s, hello);
@@ -526,6 +530,11 @@ void MainWindow::handleIpcCommand(QTcpSocket *s, const QJsonObject& cmd) {
     if (c == "calib") {
         enqueueToActive(Command(CmdType::AUTO_CALIBRATE));
         reply(true, "calib queued");
+        return;
+    }
+    if (c == "powerz") {
+        if (cmd.contains("reset") && cmd["reset"].toBool() && pzWorker) pzWorker->resetStats();
+        reply(true, "powerz stats reset");
         return;
     }
     if (c == "tab") {
@@ -830,6 +839,37 @@ void MainWindow::setupUI() {
     addPzField("AVG I (A)", lePzIAvg);
     addPzField("Temp (C)", lePzTemp);
     vMon->addLayout(hPz);
+
+    /* Power-Z 平均统计: 最近 10s 滑动窗口的平均电压/电流/功耗(200ms 采样, 约 50 样本) */
+    QHBoxLayout *hPzStat = new QHBoxLayout();
+    hPzStat->setSpacing(6);
+    auto addPzStatField = [&](const QString &label, QLineEdit *&out){
+        QWidget *cell = new QWidget();
+        cell->setFixedHeight(40);
+        QVBoxLayout *vCell = new QVBoxLayout(cell);
+        vCell->setContentsMargins(2, 1, 2, 1);
+        vCell->setSpacing(0);
+        QLabel *l = new QLabel(label);
+        l->setStyleSheet("border: none; color: #666666; font-size: 7pt; font-weight: bold;");
+        QLineEdit *le = new QLineEdit("-");
+        le->setReadOnly(true);
+        le->setFixedHeight(22);
+        le->setStyleSheet("color: #8E44AD; font-weight: bold; border: 1px solid #DDDDDD; border-radius: 2px; background: #FFFFFF; padding: 0 3px; font-size: 8pt;");
+        out = le;
+        vCell->addWidget(l);
+        vCell->addWidget(le);
+        hPzStat->addWidget(cell, 1);
+    };
+    addPzStatField("Avg V (V)", lePzAvgV);
+    addPzStatField("Avg I (A)", lePzAvgI);
+    addPzStatField("Avg P (W)", lePzAvgP);
+    addPzStatField("10s Win(s)", lePzStatSec);
+    btnPzReset = new QPushButton("Reset Stats");
+    btnPzReset->setFixedHeight(22);
+    btnPzReset->setStyleSheet("font-size: 8pt;");
+    connect(btnPzReset, &QPushButton::clicked, this, [this](){ if (pzWorker) pzWorker->resetStats(); });
+    hPzStat->addWidget(btnPzReset);
+    vMon->addLayout(hPzStat);
 
     // =============== 鍒?3: 鎺ョ瑕嗙洊鍙婃祴璇?===============
     QVBoxLayout *col3 = new QVBoxLayout();
@@ -1786,6 +1826,12 @@ void MainWindow::onPowerZTelemetry(double vbus, double ibus, double vbusAvg, dou
     if (lePzVAvg) lePzVAvg->setText(QString::number(vbusAvg, 'f', 6));
     if (lePzIAvg) lePzIAvg->setText(QString::number(ibusAvg, 'f', 6));
     if (lePzTemp) lePzTemp->setText(QString::number(tempC, 'f', 2));
+    if (pzWorker) {
+        if (lePzAvgV) lePzAvgV->setText(QString::number(pzWorker->avgV(), 'f', 6));
+        if (lePzAvgI) lePzAvgI->setText(QString::number(pzWorker->avgI(), 'f', 6));
+        if (lePzAvgP) lePzAvgP->setText(QString::number(pzWorker->avgP(), 'f', 6));
+        if (lePzStatSec) lePzStatSec->setText(QString::number(pzWorker->statSec(), 'f', 1));
+    }
     if (lblPzStatus && lblPzStatus->text() != "Power-Z: 已连接") {
         lblPzStatus->setText("Power-Z: 已连接");
         lblPzStatus->setStyleSheet("border: none; color: #198754; font-size: 8pt; font-weight: bold;");
@@ -1798,6 +1844,12 @@ void MainWindow::onPowerZTelemetry(double vbus, double ibus, double vbusAvg, dou
     pz["ibus_avg_a"] = ibusAvg;
     pz["power_w"] = power;
     pz["temp_c"] = tempC;
+    if (pzWorker) {
+        pz["avg_v"] = pzWorker->avgV();
+        pz["avg_a"] = pzWorker->avgI();
+        pz["avg_w"] = pzWorker->avgP();
+        pz["stat_sec"] = pzWorker->statSec();
+    }
     ipcBroadcast(pz);
 }
 void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {

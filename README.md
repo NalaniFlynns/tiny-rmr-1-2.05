@@ -1,3 +1,8 @@
+## 更新记录（2026-08-11，RMRDebugger：Power-Z 平均统计）
+- **Power-Z 10s 滑动窗口平均统计**：`PowerZWorker` 新增软件统计——200ms 采样压入窗口、弹出超窗样本，实时计算最近 10s 平均电压/电流/功耗（约 50 样本）
+- **GUI**：Power-Z 区域新增一行 `Avg V / Avg I / Avg P / 10s Win(s)` + `Reset Stats` 按钮（清零重填窗口）
+- **IPC**：`hello` 与 `powerz` 事件新增 `avg_v / avg_a / avg_w / stat_sec` 字段；新增命令 `{"cmd":"powerz","reset":true}` 清零统计
+- **验证**：KM003C 已连接实测——`avg_v` 3.2009V 稳定、窗口满后 `stat_sec` 保持 ~10s、清零后从 0 重新填充；`rmrdebuger.exe` 已更新（firmware/RMRDebugger/ 与 RMR_Factory_Tool_V2.0/）
 ## 更新记录（2026-08-11，固件 V4.3.3 低功耗调试版 DEBUG_LP_BUILD：OFF 态 WFI/STANDBY0 深睡 + 开机态 SWD，已烧录验证）
 - **新增调试编译宏 `DEBUG_LP_BUILD`**（`app_config.h`，默认 0，与 `DEBUG_BUILD`/`POWER_SOURCE_DIRECT`/`POWER_SAVE_BUILD` 正交）：1=低功耗调试专用，版本串 `V4.3.3_DBGL`
 - **OFF 态彻底低功耗**：强制进入深睡段（关 ADC/VREF + WFI + STANDBY0，忽略 NVM SWD 位），SWD 自然断开可接受；出厂默认清 `FLAG_SWD_IN_OFF_STATE`

@@ -1,4 +1,4 @@
-﻿#include "PowerZWorker.h"
+#include "PowerZWorker.h"
 #include <QDebug>
 #include <QThread>
 #include <cstring>
@@ -34,6 +34,17 @@ bool PowerZWorker::start(int intervalMs) {
 void PowerZWorker::stop() {
     m_timer->stop();
     closeDevice();
+}
+
+void PowerZWorker::resetStats() {
+    m_window.clear();
+    m_winCount = 0;
+    m_winVSum = m_winISum = m_winPSum = 0.0;
+}
+
+double PowerZWorker::statSec() const {
+    if (m_window.size() < 2) return 0.0;
+    return (m_window.back().ms - m_window.front().ms) / 1000.0;
 }
 
 static QString hidDevicePathFromSetupApi() {
@@ -85,6 +96,7 @@ bool PowerZWorker::openDevice() {
     }
     if (!m_connected) {
         m_connected = true;
+        resetStats();
         emit stateChanged(true, tr("Power-Z KM003C 已连接"));
     }
     return true;
@@ -159,6 +171,21 @@ void PowerZWorker::poll() {
     m_ibusAvg = rdI32(12) / 1e6;
     m_tempC = rdI16(24) / 128.0;
     m_power = m_vbus * m_ibus;
+
+    /* 10s 滑动窗口平均: 压入新样本, 弹出超窗样本 */
+    qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    m_window.push_back({nowMs, m_vbus, m_ibus, m_power});
+    m_winVSum += m_vbus;
+    m_winISum += m_ibus;
+    m_winPSum += m_power;
+    m_winCount = (quint32)m_window.size();
+    while (m_window.size() > 1 && nowMs - m_window.front().ms > kStatWindowMs) {
+        m_winVSum -= m_window.front().v;
+        m_winISum -= m_window.front().i;
+        m_winPSum -= m_window.front().p;
+        m_window.pop_front();
+        m_winCount = (quint32)m_window.size();
+    }
 
     m_failCount = 0;
     emit telemetry(m_vbus, m_ibus, m_vbusAvg, m_ibusAvg, m_tempC);

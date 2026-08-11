@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <QMainWindow>
 #include <QTableWidget>
 #include <QSqlDatabase>
@@ -190,6 +190,11 @@ private:
     QLineEdit *lePzTemp = nullptr;
     QLineEdit *lePzVAvg = nullptr;
     QLineEdit *lePzIAvg = nullptr;
+    QLineEdit *lePzAvgV = nullptr;
+    QLineEdit *lePzAvgI = nullptr;
+    QLineEdit *lePzAvgP = nullptr;
+    QLineEdit *lePzStatSec = nullptr;
+    QPushButton *btnPzReset = nullptr;
 
     /* 本地 IPC 调试接口 (127.0.0.1:7345, JSON 行协议) */
     QTcpServer *ipcServer = nullptr;

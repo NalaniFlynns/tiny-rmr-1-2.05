@@ -1,6 +1,8 @@
-﻿#pragma once
+#pragma once
 #include <QObject>
 #include <QTimer>
+#include <QDateTime>
+#include <deque>
 #include <QString>
 #include <windows.h>
 
@@ -28,6 +30,13 @@ public:
     double power() const { return m_power; }      /* W = V*I */
     double tempC() const { return m_tempC; }
 
+    /* 平均统计: 最近 10s 滑动窗口(200ms 采样, 约 50 样本) */
+    void resetStats();
+    double avgV() const { return m_winCount ? m_winVSum / m_winCount : 0.0; }
+    double avgI() const { return m_winCount ? m_winISum / m_winCount : 0.0; }
+    double avgP() const { return m_winCount ? m_winPSum / m_winCount : 0.0; }
+    double statSec() const;
+
 signals:
     void telemetry(double vbus, double ibus, double vbusAvg, double ibusAvg, double tempC);
     void stateChanged(bool connected, const QString &detail);
@@ -46,4 +55,9 @@ private:
     int m_failCount = 0;
     bool m_connected = false;
     double m_vbus = 0.0, m_ibus = 0.0, m_vbusAvg = 0.0, m_ibusAvg = 0.0, m_tempC = 0.0, m_power = 0.0;
+    struct PzSample { qint64 ms; double v, i, p; };
+    std::deque<PzSample> m_window;
+    static constexpr int kStatWindowMs = 10000;
+    quint32 m_winCount = 0;
+    double m_winVSum = 0.0, m_winISum = 0.0, m_winPSum = 0.0;
 };
