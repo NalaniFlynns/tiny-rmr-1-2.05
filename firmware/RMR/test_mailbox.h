@@ -52,7 +52,7 @@ typedef struct {
     uint8_t  nvm_is_dirty;
     uint8_t  nvm_save_fail_cnt;
     uint8_t  ovr_block_phys_keys; 
-    uint8_t  _pad0[1]; 
+    uint8_t  rst_cause;         /* RSTCAUSE ID of last boot (same offset as old _pad0) */
 
     uint32_t state_inactivity_sec;
     uint32_t nvm_seq_id;

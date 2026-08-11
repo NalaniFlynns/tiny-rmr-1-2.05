@@ -30,6 +30,7 @@ bool g_flash_mode_used __attribute__((section(".noinit")));
 #endif
 
 volatile uint32_t g_tick_ms = 0;
+volatile uint32_t g_rst_cause = 0;   /* SYSCTL RSTCAUSE ID, captured once at boot (read-to-clear) */
 
 /* 1ms ????: MSPM0C1103/1104 ??? SysTick(TI E2E ??, ???????? 0),
    ????? GPTIMER14 ?????????????????? >1ms(????),
@@ -113,6 +114,7 @@ static void update_debug_string(void) {
     append_str(" V:"); append_int(g_vbatt_mv_filtered, 4);
     append_str("mV Max:"); append_int(battery_get_safe_brt(BRT_SCALE_MAX), 1);
     append_str(" P:"); append_int(g_last_applied_pwm, 4);
+    append_str(" Rst:"); append_int(g_rst_cause, 2);
 
     while (str_idx < 63) { g_debug_str[str_idx++] = ' '; } g_debug_str[63] = '\0';
 }
@@ -121,6 +123,21 @@ static void update_debug_string(void) {
 int main(void) {
     SYSCFG_DL_init();
     __enable_irq();
+    /* Reset cause (read-to-clear, so capture before anything else reads it):
+       distinguish cold boot (POR/BOR/SHUTDOWN-exit) from soft resets
+       (WWDT violation, SYSRST, debugger, etc.). */
+    g_rst_cause = SYSCTL->SOCLOCK.RSTCAUSE & SYSCTL_RSTCAUSE_ID_MASK;
+    bool first_boot =
+        (g_rst_cause == SYSCTL_RSTCAUSE_ID_PORHWFAIL) ||
+        (g_rst_cause == SYSCTL_RSTCAUSE_ID_POREXNRST) ||
+        (g_rst_cause == SYSCTL_RSTCAUSE_ID_PORSW) ||
+        (g_rst_cause == SYSCTL_RSTCAUSE_ID_BORSUPPLY) ||
+        (g_rst_cause == SYSCTL_RSTCAUSE_ID_BORWAKESHUTDN);
+    if (g_rst_cause == SYSCTL_RSTCAUSE_ID_NORST) {
+        /* If the boot ROM already cleared RSTCAUSE, fall back to the retained
+           SRAM magic: only a fresh POR loses SRAM content. */
+        first_boot = (g_por_magic != POR_MAGIC);
+    }
 #if POWER_SAVE_BUILD
     /* ECO: 启动后先断 ADC/VREF 寄存器电源域, 首次采样/开机测压前再上电(配置保持, 仅门控) */
     DL_ADC12_disablePower(HW_ADC_INST);
@@ -150,7 +167,8 @@ int main(void) {
     static uint32_t flash_mode_tick = 0;
 
 #if FEATURE_AUTO_POWER_ON
-    if (sys_memory.features & FLAG_AUTO_POWER_ON) {
+    /* Only real power-on auto-boots; WWDT/SYSRST/debug resets must stay OFF */
+    if (first_boot && (sys_memory.features & FLAG_AUTO_POWER_ON)) {
         if (battery_startup_check()) {
             sys_state = SYS_RUN;
             g_inactivity_sec = 0;
@@ -316,8 +334,11 @@ int main(void) {
                 /* STANDBY0: IOMUX IO wakeup (WUEN/WCOMP async level compare) is
                    the primary wake source; GPIO edge IRQ stays as a backup.
                    WCOMP must be configured before WUEN is enabled. */
-                DL_GPIO_setWakeupCompareValue(BUTTONS_BT1_IOMUX, DL_GPIO_WAKEUP_COMPARE_VALUE_1);
-                DL_GPIO_setWakeupCompareValue(BUTTONS_BT2_IOMUX, DL_GPIO_WAKEUP_COMPARE_VALUE_1);
+                /* Buttons are active-low (idle=1, pressed=0): compare for 0 so
+                   a press wakes the device. Compare for 1 would only wake on
+                   release and also match immediately on standby entry. */
+                DL_GPIO_setWakeupCompareValue(BUTTONS_BT1_IOMUX, DL_GPIO_WAKEUP_COMPARE_VALUE_0);
+                DL_GPIO_setWakeupCompareValue(BUTTONS_BT2_IOMUX, DL_GPIO_WAKEUP_COMPARE_VALUE_0);
                 DL_GPIO_enableWakeUp(BUTTONS_BT1_IOMUX);
                 DL_GPIO_enableWakeUp(BUTTONS_BT2_IOMUX);
                 DL_GPIO_enableInterrupt(PORT_BTN, PIN_BT1 | PIN_BT2);
@@ -325,16 +346,22 @@ int main(void) {
                 NVIC_EnableIRQ(GPIOA_INT_IRQn);
                 NVIC_ClearPendingIRQ(TIMG14_INT_IRQn);
 
-                /* WWDT runs on LFCLK and keeps counting in STANDBY0 (STISM only
-                   covers SLEEP); with the main loop halted it would reset the
-                   device every 500ms. Stretch its period to the maximum
-                   (~8192s) before deep sleep, restore the 500ms config after
-                   wakeup so the watchdog never fires while in STANDBY0. */
-                DL_WWDT_restart(WWDT0_INST);
+                /* WWDT keeps counting in STANDBY0 (STISM only covers SLEEP), so
+                   with the main loop halted it would reset the device every
+                   500ms. A new WWDT period only loads on the next counter
+                   restart: write the stretch config FIRST, then restart, so
+                   the ~8192s period is active before STANDBY0 is entered.
+                   (Restart-then-write leaves the old 500ms period active and
+                   the WWDT would reset ~500ms into deep sleep.)
+                   write the stretch config FIRST, then restart, so the ~8192s
+                   period is active before STANDBY0 is entered. (Restart-then-
+                   write leaves the old 500ms period active and the WWDT would
+                   reset the device ~500ms into deep sleep.) */
                 WWDT0->WWDTCTL0 = (WWDT_WWDTCTL0_KEY_UNLOCK_W |
                                    WWDT_WWDTCTL0_PER_EN_25 |
                                    WWDT_WWDTCTL0_CLKDIV_MAXIMUM |
                                    WWDT_WWDTCTL0_STISM_STOP);
+                DL_WWDT_restart(WWDT0_INST);
 #if FEATURE_LOWPOWER_STANDBY
                 if (sys_memory.features & FLAG_LOWPOWER_STANDBY) {
                     DL_SYSCTL_setPowerPolicySTANDBY0();

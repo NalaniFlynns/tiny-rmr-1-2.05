@@ -264,6 +264,7 @@ typedef struct {
 typedef enum { SYS_OFF = 0, SYS_RUN, SYS_LVP_CRIT, SYS_FLASH_MODE, SYS_TEST_MODE, SYS_ALS_ERR } SysState_t;
 
 extern volatile uint32_t g_tick_ms;
+extern volatile uint32_t g_rst_cause;
 extern SysState_t sys_state;
 extern NVM_Data_t sys_memory;
 extern volatile uint32_t g_vbatt_mv_raw;

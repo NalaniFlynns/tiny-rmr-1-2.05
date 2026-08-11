@@ -1,3 +1,10 @@
+## 更新记录：2026-08-11，深睡后“松开灯又亮”根因修复（双键 1.5s 熄灯 → 松开应保持灭灯）
+- 症状：RUN 态双键按住满 1.5s 灯灭后，松开灯又亮（独立供电同样复现）。根因并非按键/邮箱逻辑，而是深睡路径三处硬件级缺陷叠加
+- 根因 1（WWDT 拉伸未生效）：进入 STANDBY0 前代码先 `DL_WWDT_restart()` 再写 `WWDTCTL0` 拉伸周期——但 MSPM0 的 WWDT **新周期只在下次计数器重启时装载**，顺序反了导致深睡期间仍是 500ms 周期，约 0.5s 后 WWDT 超时复位设备。修复：**先写 `WWDTCTL0` 拉伸配置，再 `DL_WWDT_restart()`**，深睡时实际生效 ~8192s 周期
+- 根因 2（IOMUX 唤醒比较方向错误）：按键为低有效（空闲=1、按下=0），代码却配 `DL_GPIO_WAKEUP_COMPARE_VALUE_1`（匹配高电平）——进 standby 时引脚已为高 → 立即误唤醒/无法保持深睡；按下（1→0）不产生唤醒 → “有概率按键无法开机唤醒”。修复：改为 **`DL_GPIO_WAKEUP_COMPARE_VALUE_0`**（匹配低电平，按下即异步唤醒）
+- 根因 3（AUTO_POWER_ON 不区分复位来源）：`FEATURE_AUTO_POWER_ON` 在**任何复位**后都自动开机。WWDT 复位 → 重启 → 看到 NVM 中 auto-power-on 标志 → 直接 RUN → 灯亮。修复：启动时读 `SYSCTL->SOCLOCK.RSTCAUSE`（读后自动清零，仅冷启动 POR/BOR/SHUTDOWN 退出视为 first_boot），**WWDT/SYSRST/调试复位一律保持关机**；`RSTCAUSE` 为 0 时用 `.TI.noinit` SRAM magic 兜底
+- 新增观测：`g_test_box.rst_cause`（复用原 `_pad0` 字节，偏移不变，调试器无需改布局）镜像本次复位原因；`g_debug_str` 追加 `Rst:xx` 字段，烧录后可确认复位来源（0x0E=WWDT0 违规）
+- 验证：DEBUG_LP_BUILD / DEBUG_BUILD / 默认三配置 0 错误 0 警告；`firmware/RMR/hex/RMR_DBGL.hex`（V4.3.3_DBGL）已更新并已通过 RMRDebugger 烧录（OpenOCD Verify OK）。待独立供电实测：双键 1.5s 熄灯 → 松开保持灭灯；关机态按任意键应立即唤醒（不再等松开）
 ## 更新记录：2026-08-11，按键交互调整：双键长按 1.5s 立即熄灯 / 5s 转 ALS 亮灯 / 中途松开关机
 - **RUN/LVP 态按住双键**：1.5s 到点**立即熄灯**（无需松开），进入 OFF；继续按住到 5s → 闪烁提示（led_blink_twice）并**以 ALS 模式开机**（测压达标才启动，强制写入 ALS 标志并落盘）；1.5s~5s 之间松开 → 保持关机
 - **实现**：`hal_keys.c` 1.5s 事件由"仅 OFF 态按住触发"改为全状态按住触发（RUN 态立即响应熄灯）；`empty_mspm0c1104.c` OFF 态新增 `EVT_BOTH_LONG_5S` 分支（闪烁 + ALS 开机）
