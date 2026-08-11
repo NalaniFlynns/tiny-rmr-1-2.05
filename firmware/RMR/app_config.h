@@ -18,11 +18,18 @@
 #ifndef POWER_SAVE_BUILD
 #define POWER_SAVE_BUILD 0
 #endif
+/* 调试版: 1=测试板直供调试专用, 全程 SWD 可访问(不进 STANDBY0 深睡/不执行掉电 SHUTDOWN), 其余特性(ECO 降频/NVM 等)不变 */
+#ifndef DEBUG_BUILD
+#define DEBUG_BUILD 0
+#endif
 
 /* SR516SW 单节内阻(mΩ): 规格书未标注, 取氧化银纽扣电池典型值, 可经调试器写 NVM r_series 校准 */
 #define BATT_SR516SW_SINGLE_R_MOHM  25000
 
-#if POWER_SAVE_BUILD
+#if DEBUG_BUILD
+#define FW_VERSION_STR "V4.3.3_DBG"
+#define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
+#elif POWER_SAVE_BUILD
 #if POWER_SOURCE_DIRECT
 #define FW_VERSION_STR "V4.3.3_ECO_D"
 #define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
@@ -86,7 +93,10 @@
     (FEATURE_SWD_IN_OFF_STATE ? FLAG_SWD_IN_OFF_STATE : 0) | \
     (FEATURE_AUTO_POWER_ON ? FLAG_AUTO_POWER_ON : 0))
 
-#if POWER_SAVE_BUILD
+#if DEBUG_BUILD
+/* 调试版: 出厂默认 OFF 态保持 SWD 可访问(与代码级 SWD 保活一致) */
+#define DEFAULT_FEATURE_FLAGS (FEATURE_RUNTIME_MASK | FLAG_SWD_IN_OFF_STATE)
+#elif POWER_SAVE_BUILD
 /* 省电版: 出厂默认清 SWD 保活位 -> OFF 态进 STANDBY0 深睡(µA 级), 代价是 OFF 态 SWD 不可访问 */
 #define DEFAULT_FEATURE_FLAGS (FEATURE_RUNTIME_MASK & ~FLAG_SWD_IN_OFF_STATE)
 #else

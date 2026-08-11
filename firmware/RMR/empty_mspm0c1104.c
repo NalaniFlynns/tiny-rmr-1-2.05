@@ -190,6 +190,15 @@ int main(void) {
 #endif
         
         /* 掉电保护: 保存配置后进 SHUTDOWN */
+#if DEBUG_BUILD
+        /* 调试版: 直供不掉电 SHUTDOWN, 保证 SWD 全程可连; 仍保留脏配置落盘 */
+        if (g_vbatt_mv_raw < BATT_POWER_LOSS_MV) {
+            if (++pwr_loss_cnt >= POWERLOSS_COUNT) {
+                pwr_loss_cnt = 0;
+                nvm_save_dirty(); 
+            }
+        } else { pwr_loss_cnt = 0; }
+#else
         if (g_vbatt_mv_raw < BATT_POWER_LOSS_MV) {
             if (++pwr_loss_cnt >= POWERLOSS_COUNT) {
                 led_set_target(0, false); led_update_task();
@@ -201,6 +210,7 @@ int main(void) {
             }
         } else { pwr_loss_cnt = 0; }
 
+#endif
         /* 无操作自动调暗/关机 */
 #if FEATURE_INACTIVITY_AUTO_DIM_OFF
         if (g_tick_ms % TIME_SEC_MS == 0) {
@@ -273,6 +283,7 @@ int main(void) {
                 }
             }
 
+#if !DEBUG_BUILD
             if (sys_state == SYS_OFF && key_is_idle() && !(sys_memory.features & FLAG_SWD_IN_OFF_STATE)) {
                 DL_ADC12_disablePower(HW_ADC_INST);
                 DL_VREF_disablePower(VREF);
@@ -301,6 +312,7 @@ int main(void) {
                     g_inactivity_sec = 0;
                 }
             }
+#endif
         } 
         else if (sys_state == SYS_RUN || sys_state == SYS_LVP_CRIT) {
             if (key == EVT_BOTH_LONG_1_5S) {

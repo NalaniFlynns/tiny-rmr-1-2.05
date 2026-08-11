@@ -1,3 +1,9 @@
+## 更新记录（2026-08-11，固件 V4.3.3 调试版 DEBUG_BUILD：测试板直供 + 全程 SWD，已烧录验证）
+- **新增调试编译宏 `DEBUG_BUILD`**（`app_config.h`，默认 0，与 `POWER_SOURCE_DIRECT`/`POWER_SAVE_BUILD` 正交）：1=测试板直供调试专用，版本串 `V4.3.3_DBG`
+- **全程 SWD 保活**（仅调试版生效，其余特性不变）：OFF 态跳过 STANDBY0 深睡段（不关 ADC/VREF、不 WFI 深睡）；掉电保护路径不执行 SHUTDOWN（仅保留脏配置落盘）；出厂默认置位 `FLAG_SWD_IN_OFF_STATE`
+- **保留特性**：ECO 动态降频、NVM 校验/重试/多槽位、ALS 故障锁、LVP、FLASH 模式等全部不变
+- **产物**：`firmware/RMR/hex/RMR_DBG.hex`（`V4.3.3_DBG`）
+- **验证**：DEBUG_BUILD=1 与 =0 两配置均 0 错误 0 警告；已烧录测试板（XDS110 SWD），OFF 态 SWD 连接保持、telemetry 150ms 实时刷新
 ## 更新记录（2026-08-11，固件 V4.3.3 优化：ECO 动态降频 + NVM 磨损 + ALS 故障锁 + 杂项）
 - **ECO 动态降频**：关机/FLASH 态 SYSOSC 切 4MHz 低功耗模式（24MHz→4MHz，睡眠电流大幅下降），开机/运行态自动恢复 24MHz；GPTIMER14 同步重配 LOAD，`g_tick_ms` 恒为真实 1ms（按键 1.5s/5s、FLASH 5min 超时、轮询计时全部不受影响）
 - **NVM 磨损优化**：按键调档/模式切换不再立即写 FLASH，只置 dirty 交给 30s 后台自动保存（连按调档只记一次）；关机/LVP/掉电强制保存路径保留
