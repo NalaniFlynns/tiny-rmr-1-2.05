@@ -1,3 +1,9 @@
+## 更新记录：2026-08-11，固件深睡唤醒修复（STANDBY0 按键唤醒/进入 standby 概率性问题）
+- **根因 1：WWDT 深睡复位**：WWDT 由 LFCLK 驱动，`DL_WWDT_STOP_IN_SLEEP` 只覆盖 SLEEP 模式；进入 STANDBY0 后 LFCLK 继续运行，500ms 看门狗因主循环停摆而超时 → 每 500ms 周期性 SYSRST，导致"有概率无法进入 standby"且按键唤醒被复位窗口吞掉。修复：进入 STANDBY0 前将 WWDT 周期临时拉伸到最大（PER_EN_25 + CLKDIV /8 ≈ 8192s），唤醒后立即恢复 500ms 配置并喂狗
+- **根因 2：唤醒源只配了 GPIO 边沿中断**：STANDBY0 深睡下边沿中断依赖 ULPCLK 采样，按下瞬间易被丢失。修复：新增 IOMUX IO 唤醒（`DL_GPIO_setWakeupCompareValue` + `DL_GPIO_enableWakeUp`，WCOMP 匹配高电平、按键按下拉低即异步唤醒），GPIO 边沿中断保留作双保险；唤醒后 `DL_GPIO_disableWakeUp` 清理
+- **根因 3：WFI 可被 1ms tick 打断**：进入深睡前清 `GPIOA/TIMG14` pending，并用 `__disable_irq()/__WFI()/__enable_irq()` 受控进入，杜绝"概率性无法进入 standby"的 tick 竞态
+- **修复代码位置**：`empty_mspm0c1104.c` OFF 深睡段（STANDBY0 入口/出口），对 `DEBUG_LP_BUILD`、正式版（FLAG_SWD_IN_OFF_STATE 未置位）同样生效
+- **验证**：`DEBUG_LP_BUILD=1` / `DEBUG_BUILD=1` / 默认三配置均 0 错误 0 警告；产物 `firmware/RMR/hex/RMR_DBGL.hex`（V4.3.3_DBGL）已更新，建议重新烧录后实测：power off → 深睡（电流应稳定 μA 级无周期性尖峰）→ 双键 1.5s 应 100% 唤醒开机
 ## 更新记录（2026-08-11，RMRDebugger：Power-Z 平均统计）
 - **Power-Z 10s 滑动窗口平均统计**：`PowerZWorker` 新增软件统计——200ms 采样压入窗口、弹出超窗样本，实时计算最近 10s 平均电压/电流/功耗（约 50 样本）
 - **GUI**：Power-Z 区域新增一行 `Avg V / Avg I / Avg P / 10s Win(s)` + `Reset Stats` 按钮（清零重填窗口）

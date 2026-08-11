@@ -298,23 +298,48 @@ int main(void) {
                 DL_GPIO_setUpperPinsPolarity(PORT_BTN, DL_GPIO_PIN_27_EDGE_FALL);
                 DL_GPIO_setLowerPinsPolarity(PORT_BTN, DL_GPIO_PIN_2_EDGE_FALL);
                 DL_GPIO_clearInterruptStatus(PORT_BTN, PIN_BT1 | PIN_BT2);
+                /* STANDBY0: IOMUX IO wakeup (WUEN/WCOMP async level compare) is
+                   the primary wake source; GPIO edge IRQ stays as a backup.
+                   WCOMP must be configured before WUEN is enabled. */
+                DL_GPIO_setWakeupCompareValue(BUTTONS_BT1_IOMUX, DL_GPIO_WAKEUP_COMPARE_VALUE_1);
+                DL_GPIO_setWakeupCompareValue(BUTTONS_BT2_IOMUX, DL_GPIO_WAKEUP_COMPARE_VALUE_1);
+                DL_GPIO_enableWakeUp(BUTTONS_BT1_IOMUX);
+                DL_GPIO_enableWakeUp(BUTTONS_BT2_IOMUX);
                 DL_GPIO_enableInterrupt(PORT_BTN, PIN_BT1 | PIN_BT2);
+                NVIC_ClearPendingIRQ(GPIOA_INT_IRQn);
                 NVIC_EnableIRQ(GPIOA_INT_IRQn);
-                
+                NVIC_ClearPendingIRQ(TIMG14_INT_IRQn);
+
+                /* WWDT runs on LFCLK and keeps counting in STANDBY0 (STISM only
+                   covers SLEEP); with the main loop halted it would reset the
+                   device every 500ms. Stretch its period to the maximum
+                   (~8192s) before deep sleep, restore the 500ms config after
+                   wakeup so the watchdog never fires while in STANDBY0. */
+                DL_WWDT_restart(WWDT0_INST);
+                WWDT0->WWDTCTL0 = (WWDT_WWDTCTL0_KEY_UNLOCK_W |
+                                   WWDT_WWDTCTL0_PER_EN_25 |
+                                   WWDT_WWDTCTL0_CLKDIV_MAXIMUM |
+                                   WWDT_WWDTCTL0_STISM_STOP);
 #if FEATURE_LOWPOWER_STANDBY
                 if (sys_memory.features & FLAG_LOWPOWER_STANDBY) {
-                    DL_SYSCTL_setPowerPolicySTANDBY0(); 
+                    DL_SYSCTL_setPowerPolicySTANDBY0();
                 }
 #endif
-                __WFI(); 
-                
+                __disable_irq();   /* controlled WFI: 1ms tick cannot abort it */
+                __WFI();
+                __enable_irq();
 #if FEATURE_LOWPOWER_STANDBY
-                DL_SYSCTL_setPowerPolicyRUN0SLEEP0(); 
+                DL_SYSCTL_setPowerPolicyRUN0SLEEP0();
 #endif
+                DL_GPIO_disableWakeUp(BUTTONS_BT1_IOMUX);
+                DL_GPIO_disableWakeUp(BUTTONS_BT2_IOMUX);
                 DL_GPIO_disableInterrupt(PORT_BTN, PIN_BT1 | PIN_BT2);
                 NVIC_DisableIRQ(GPIOA_INT_IRQn);
-                
-                battery_resume();   /* 唤醒后测压 */
+                /* restore normal 500ms watchdog service */
+                SYSCFG_DL_WWDT0_init();
+                DL_WWDT_restart(WWDT0_INST);
+
+                battery_resume();   /* wakeup: re-measure battery */
                 if (g_vbatt_mv_filtered > sys_memory.lvp_ext) {
                     g_inactivity_sec = 0;
                 }
