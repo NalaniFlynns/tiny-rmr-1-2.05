@@ -1,3 +1,10 @@
+## 更新记录（2026-08-11，固件 V4.3.3 低功耗调试版 DEBUG_LP_BUILD：OFF 态 WFI/STANDBY0 深睡 + 开机态 SWD，已烧录验证）
+- **新增调试编译宏 `DEBUG_LP_BUILD`**（`app_config.h`，默认 0，与 `DEBUG_BUILD`/`POWER_SOURCE_DIRECT`/`POWER_SAVE_BUILD` 正交）：1=低功耗调试专用，版本串 `V4.3.3_DBGL`
+- **OFF 态彻底低功耗**：强制进入深睡段（关 ADC/VREF + WFI + STANDBY0，忽略 NVM SWD 位），SWD 自然断开可接受；出厂默认清 `FLAG_SWD_IN_OFF_STATE`
+- **开机/运行态 SWD 保持**：RUN 态正常可调试，telemetry 实时；掉电保护不执行 SHUTDOWN（仅存脏配置），主循环 WFI 睡眠等待 1ms tick
+- **保留特性**：ECO 动态降频、NVM 校验/重试/多槽位、ALS 故障锁、LVP、FLASH 模式等全部不变
+- **产物**：`firmware/RMR/hex/RMR_DBGL.hex`（`V4.3.3_DBGL`）
+- **验证**：DEBUG_LP_BUILD=1 与 =0 均 0 错误 0 警告；已烧录测试板：RUN 态 SWD+telemetry 实时；`power off` 后 STANDBY0 深睡（OpenOCD target unknown、数据冻结）；OpenOCD 复位唤醒后自动开机、SWD 自动重连
 ## 更新记录（2026-08-11，固件 V4.3.3 调试版 DEBUG_BUILD：测试板直供 + 全程 SWD，已烧录验证）
 - **新增调试编译宏 `DEBUG_BUILD`**（`app_config.h`，默认 0，与 `POWER_SOURCE_DIRECT`/`POWER_SAVE_BUILD` 正交）：1=测试板直供调试专用，版本串 `V4.3.3_DBG`
 - **全程 SWD 保活**（仅调试版生效，其余特性不变）：OFF 态跳过 STANDBY0 深睡段（不关 ADC/VREF、不 WFI 深睡）；掉电保护路径不执行 SHUTDOWN（仅保留脏配置落盘）；出厂默认置位 `FLAG_SWD_IN_OFF_STATE`

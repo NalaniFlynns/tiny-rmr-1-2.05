@@ -161,7 +161,7 @@ int main(void) {
 #endif
 
     while (1) {
-#if POWER_SAVE_BUILD
+#if POWER_SAVE_BUILD || DEBUG_LP_BUILD
         __WFI();   /* 省电版: 睡眠等待 GPTIMER14 1ms tick 中断唤醒, 替代 24MHz 忙等 */
 #else
         delay_cycles(CPU_CYCLES_PER_MS);
@@ -190,7 +190,7 @@ int main(void) {
 #endif
         
         /* 掉电保护: 保存配置后进 SHUTDOWN */
-#if DEBUG_BUILD
+#if DEBUG_BUILD || DEBUG_LP_BUILD
         /* 调试版: 直供不掉电 SHUTDOWN, 保证 SWD 全程可连; 仍保留脏配置落盘 */
         if (g_vbatt_mv_raw < BATT_POWER_LOSS_MV) {
             if (++pwr_loss_cnt >= POWERLOSS_COUNT) {
@@ -255,7 +255,7 @@ int main(void) {
 
         if (sys_state == SYS_OFF) {
             led_set_target(0, false);
-#if POWER_SAVE_BUILD
+#if POWER_SAVE_BUILD || DEBUG_LP_BUILD
             opt3001_set_enabled(false);   /* 省电版: OFF 态关 ALS 传感器(shutdown, 幂等) */
 #endif
             
@@ -283,8 +283,15 @@ int main(void) {
                 }
             }
 
-#if !DEBUG_BUILD
-            if (sys_state == SYS_OFF && key_is_idle() && !(sys_memory.features & FLAG_SWD_IN_OFF_STATE)) {
+#if DEBUG_BUILD
+            /* DEBUG build: skip OFF deep sleep (busy loop), SWD always on */
+#else
+            if (sys_state == SYS_OFF && key_is_idle()
+#if DEBUG_LP_BUILD
+               ) {   /* LP debug: force OFF deep sleep (WFI+STANDBY0), SWD may drop */
+#else
+               && !(sys_memory.features & FLAG_SWD_IN_OFF_STATE)) {
+#endif
                 DL_ADC12_disablePower(HW_ADC_INST);
                 DL_VREF_disablePower(VREF);
 
