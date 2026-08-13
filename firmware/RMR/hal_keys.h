@@ -9,7 +9,8 @@ typedef enum {
     EVT_BT1_SHORT,
     EVT_BT2_SHORT,
     EVT_BOTH_LONG_1_5S,
-    EVT_BOTH_LONG_5S
+    EVT_BOTH_LONG_5S,
+    EVT_BOTH_RELEASE_1_5S   /* ??? 1.5s(???)???? 5s ???: ???? */
 } KeyEvent_t;
 
 KeyEvent_t keys_task(void);

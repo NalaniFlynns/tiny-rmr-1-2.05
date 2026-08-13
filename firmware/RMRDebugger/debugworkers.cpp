@@ -523,6 +523,19 @@ void OpenOcdWorker::readBlock(uint32_t ofs, uint32_t byteCount, uint8_t* outData
 void OpenOcdWorker::executeFlash(const QString& path) {
     QString safePath = path; safePath.replace("\\", "/");
     emit sigLog(probeSN, QString("[OPENOCD] Programming %1 ...").arg(safePath));
+    /* MSPM0: flash bank ?? target halted ???????? size
+       (?? examine ? target ? halt, FACTORYREGION ???? -> size=0 ->
+       program ? "Target missing or protected")?? halt ? probe, ???
+       reset halt ????? */
+    QString probe = sendTclCommand("halt", 4000, true);
+    if (probe.contains("Error", Qt::CaseInsensitive) || probe.isEmpty()) {
+        sendTclCommand("reset halt", 5000, true);
+    }
+    probe = sendTclCommand("flash probe 0", 4000, true);
+    if (probe.contains("Error", Qt::CaseInsensitive)) {
+        sendTclCommand("reset halt", 5000, true);
+        probe = sendTclCommand("flash probe 0", 4000, true);
+    }
     QString res = sendTclCommand(QString("program %1 verify reset").arg(safePath), 30000, false);
     if (res.contains("Failed", Qt::CaseInsensitive) || res.contains("No target", Qt::CaseInsensitive)) {
         throw std::runtime_error("OpenOCD Error: Programming failed. Target missing or protected.");
@@ -537,5 +550,12 @@ void OpenOcdWorker::executeFlash(const QString& path) {
         }
     }
     emit sigLog(probeSN, "[OPENOCD] Programming + Verify OK, target restarted.");
+    /* ???? SRAM ?????(g_off_intent / g_por_magic), ?????:
+       ?? reset run ????"??????"?? OFF ??, ???, ???????
+       ???? RMR.map: g_off_intent=0x20000299, g_por_magic=0x2000029C */
+    sendTclCommand("halt", 4000, true);
+    sendTclCommand("mwb 0x20000299 0x00", 2000, true);
+    sendTclCommand("mww 0x2000029C 0x00000000", 2000, true);
+    sendTclCommand("reset run", 3000, true);
 }
 void OpenOcdWorker::triggerReset() { sendTclCommand("reset run"); }

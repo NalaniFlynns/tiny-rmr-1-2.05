@@ -21,12 +21,15 @@ const char g_fw_version_flash[16] = FW_VERSION_STR;
 #if defined(__clang__) || defined(__GNUC__) || defined(__TI_COMPILER_VERSION__)
 uint32_t g_por_magic __attribute__((section(".TI.noinit")));
 bool g_flash_mode_used __attribute__((section(".TI.noinit")));
+bool g_off_intent __attribute__((section(".TI.noinit")));
 #elif defined(__GNUC__)
 uint32_t g_por_magic __attribute__((section(".noinit")));
 bool g_flash_mode_used __attribute__((section(".noinit")));
+bool g_off_intent __attribute__((section(".noinit")));
 #else
 uint32_t g_por_magic __attribute__((section(".noinit")));
 bool g_flash_mode_used __attribute__((section(".noinit")));
+bool g_off_intent __attribute__((section(".noinit")));
 #endif
 
 volatile uint32_t g_tick_ms = 0;
@@ -127,17 +130,18 @@ int main(void) {
        distinguish cold boot (POR/BOR/SHUTDOWN-exit) from soft resets
        (WWDT violation, SYSRST, debugger, etc.). */
     g_rst_cause = SYSCTL->SOCLOCK.RSTCAUSE & SYSCTL_RSTCAUSE_ID_MASK;
-    bool first_boot =
+    /* Cold boot = real power-on. Two independent signals, OR-ed:
+       - RSTCAUSE reports POR/BOR/SHUTDOWN-exit (may be consumed by the boot
+         ROM before main(), in which case it reads NORST=0);
+       - retained SRAM magic is lost on a true power-off (SRAM dies), so a
+         fresh magic proves power was actually removed. */
+    bool cold_boot =
         (g_rst_cause == SYSCTL_RSTCAUSE_ID_PORHWFAIL) ||
         (g_rst_cause == SYSCTL_RSTCAUSE_ID_POREXNRST) ||
         (g_rst_cause == SYSCTL_RSTCAUSE_ID_PORSW) ||
         (g_rst_cause == SYSCTL_RSTCAUSE_ID_BORSUPPLY) ||
         (g_rst_cause == SYSCTL_RSTCAUSE_ID_BORWAKESHUTDN);
-    if (g_rst_cause == SYSCTL_RSTCAUSE_ID_NORST) {
-        /* If the boot ROM already cleared RSTCAUSE, fall back to the retained
-           SRAM magic: only a fresh POR loses SRAM content. */
-        first_boot = (g_por_magic != POR_MAGIC);
-    }
+    if (g_por_magic != POR_MAGIC) cold_boot = true;
 #if POWER_SAVE_BUILD
     /* ECO: 启动后先断 ADC/VREF 寄存器电源域, 首次采样/开机测压前再上电(配置保持, 仅门控) */
     DL_ADC12_disablePower(HW_ADC_INST);
@@ -149,6 +153,7 @@ int main(void) {
     if (g_por_magic != POR_MAGIC) {
         g_por_magic = POR_MAGIC;
         g_flash_mode_used = false;
+        g_off_intent = false;   /* fresh power-on: AUTO_POWER_ON is allowed */
 #if DEV_CLEAR_NVM_ON_POR
         /* 烧录后首次上电(POR): 清空存储区恢复出厂 */
         nvm_force_factory_reset();
@@ -165,15 +170,22 @@ int main(void) {
     static uint8_t lvp_ext_cnt = 0;
     static uint8_t lvp_crit_cnt = 0;
     static uint32_t flash_mode_tick = 0;
+    static bool g_off_pending = false;   /* 1.5s ?????????, ???? standby */
 
 #if FEATURE_AUTO_POWER_ON
-    /* Only real power-on auto-boots; WWDT/SYSRST/debug resets must stay OFF */
-    if (first_boot && (sys_memory.features & FLAG_AUTO_POWER_ON)) {
-        if (battery_startup_check()) {
-            sys_state = SYS_RUN;
-            g_inactivity_sec = 0;
-            g_is_dimmed = false;
-            mode_init();
+    /* Cold boot always honors AUTO_POWER_ON. Warm resets only auto-boot when
+       the device was NOT intentionally off before the reset (e.g. debugger /
+       flash reset while running); WWDT/SYSRST while OFF stay off - this is
+       what keeps the LED dark after a 1.5s dual-key shutdown. */
+    if (cold_boot || !g_off_intent) {
+        if (sys_memory.features & FLAG_AUTO_POWER_ON) {
+            if (battery_startup_check()) {
+                sys_state = SYS_RUN;
+                g_inactivity_sec = 0;
+                g_is_dimmed = false;
+                g_off_intent = false;
+                mode_init();
+            }
         }
     }
 #endif
@@ -239,6 +251,7 @@ int main(void) {
                 }
                 if (g_inactivity_sec > TIME_AUTO_DIM_S + TIME_AUTO_SHUTDOWN_S) { 
                     sys_state = SYS_OFF; 
+                    g_off_intent = true;
                     nvm_save_dirty(); 
                 }
             }
@@ -251,6 +264,7 @@ int main(void) {
                 if (++lvp_ext_cnt >= LVP_EXT_COUNT) {
                     lvp_ext_cnt = 0;
                     sys_state = SYS_OFF;
+                    g_off_intent = true;
                     nvm_save_dirty(); 
                 }
             } else { lvp_ext_cnt = 0; }
@@ -267,6 +281,7 @@ int main(void) {
                 sys_state = SYS_RUN;
                 g_inactivity_sec = 0;
                 g_is_dimmed = false;
+                g_off_intent = false;
                 mode_init();
             }
         }
@@ -294,20 +309,27 @@ int main(void) {
                     sys_state = SYS_RUN;
                     g_inactivity_sec = 0;
                     g_is_dimmed = false;
+                    g_off_intent = false;
                     mode_init();
                 } else {
                     led_set_target(100, false); led_update_task(); delay_cycles(CPU_CYCLES_PER_MS * STARTUP_FAIL_BLINK_DELAY_MS);
                     led_set_target(0, false); led_update_task();
                 }
             }
+            else if (key == EVT_BOTH_RELEASE_1_5S) {
+                /* 1.5s ?????? 5s ?????: ????, ??? standby */
+                g_off_pending = false;
+            }
             else if (key == EVT_BOTH_LONG_5S) {
                 /* RUN 1.5s 已熄灯后继续按满 5s: 闪烁提示并以 ALS 模式开机(测压达标才启动);
                    1.5s~5s 之间松开则保持关机(无事件, 直接 OFF) */
+                g_off_pending = false;      /* ?? 5s: ?????? */
                 led_blink_twice();
                 if (battery_startup_check()) {
                     sys_state = SYS_RUN;
                     g_inactivity_sec = 0;
                     g_is_dimmed = false;
+                    g_off_intent = false;
                     g_is_als_mode = true;
                     sys_memory.params |= (1 << 8);
                     nvm_mark_dirty();
@@ -319,7 +341,7 @@ int main(void) {
 #if DEBUG_BUILD
             /* DEBUG build: skip OFF deep sleep (busy loop), SWD always on */
 #else
-            if (sys_state == SYS_OFF && key_is_idle()
+            if (sys_state == SYS_OFF && !g_off_pending && key_is_idle()
 #if DEBUG_LP_BUILD
                ) {   /* LP debug: force OFF deep sleep (WFI+STANDBY0), SWD may drop */
 #else
@@ -391,6 +413,10 @@ int main(void) {
         else if (sys_state == SYS_RUN || sys_state == SYS_LVP_CRIT) {
             if (key == EVT_BOTH_LONG_1_5S) {
                 sys_state = SYS_OFF;
+                g_off_intent = true;
+                g_off_pending = true;       /* ???????: ?????(???5s)?? standby */
+                led_set_target(0, false);   /* ? 1.5s ????, ???????? */
+                led_update_task();
                 nvm_save_dirty();
             } else {
                 mode_handle_key(key);
@@ -430,6 +456,7 @@ int main(void) {
                     sys_state = SYS_RUN;
                     g_inactivity_sec = 0;
                     g_is_dimmed = false;
+                    g_off_intent = false;
                     mode_init();
                 } else {
                     led_set_target(100, false); led_update_task(); delay_cycles(CPU_CYCLES_PER_MS * STARTUP_FAIL_BLINK_DELAY_MS);

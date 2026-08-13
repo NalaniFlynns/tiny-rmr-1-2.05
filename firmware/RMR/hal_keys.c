@@ -9,6 +9,8 @@ static bool both_was_down = false;
 static bool both_handled_1_5s = false; 
 static bool both_handled_5s = false; 
 static bool lock_single_key = false;
+static bool both_released = true;
+static bool both_release_handled = false;   /* ?????????? */   /* ?????????????????????(?????) */
 
 #if FEATURE_KEY_DEBOUNCE
 static uint8_t hist_bt1 = 0xFF, hist_bt2 = 0xFF;
@@ -40,6 +42,7 @@ KeyEvent_t keys_task(void) {
 
     if (!b1 && !b2) {
         lock_single_key = false;
+        both_released = true;
     }
 
     if (both_now) {
@@ -47,10 +50,12 @@ KeyEvent_t keys_task(void) {
         bt1_down_tick = 0;
         bt2_down_tick = 0;
         
-        if (!both_was_down) {
+        if (both_released) {
+            both_released = false;
             both_down_tick = g_tick_ms; 
             both_handled_1_5s = false;
             both_handled_5s = false;
+            both_release_handled = false;
         } else {
             uint32_t dur = g_tick_ms - both_down_tick;
             if (dur >= KEY_TIME_LONG_PRESS_MS && !both_handled_1_5s) {
@@ -66,7 +71,15 @@ KeyEvent_t keys_task(void) {
         if (both_was_down) {
             uint32_t dur = g_tick_ms - both_down_tick;
             if (dur >= KEY_TIME_LONG_PRESS_MS && !both_handled_5s && !both_handled_1_5s) {
-                evt = EVT_BOTH_LONG_1_5S;
+                /* ??: 1.5s ????????????, ??????????;
+                   OFF/ALS_ERR/FLASH ?????????("??5s??=????") */
+                if (sys_state != SYS_OFF && sys_state != SYS_ALS_ERR && sys_state != SYS_FLASH_MODE) {
+                    evt = EVT_BOTH_LONG_1_5S;
+                }
+            } else if (!b1 && !b2 && both_handled_1_5s && !both_handled_5s && !both_release_handled) {
+                /* 1.5s ?????? 5s ???????: ????(??? standby) */
+                both_release_handled = true;
+                evt = EVT_BOTH_RELEASE_1_5S;
             }
         } else {
             if (!lock_single_key) {
