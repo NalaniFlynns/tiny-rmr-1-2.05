@@ -321,17 +321,23 @@ int main(void) {
                 g_off_pending = false;
             }
             else if (key == EVT_BOTH_LONG_5S) {
-                /* RUN 1.5s 已熄灯后继续按满 5s: 闪烁提示并以 ALS 模式开机(测压达标才启动);
-                   1.5s~5s 之间松开则保持关机(无事件, 直接 OFF) */
-                g_off_pending = false;      /* ?? 5s: ?????? */
+                /* RUN 1.5s 熄灯后继续按满 5s: 闪烁提示并切换 ALS<->MAN 亮灯(测压达标);
+                   OFF 直接长按(开机失败重试): 以 ALS 模式开机;
+                   1.5s~5s 之间松开则保持关机 */
+                bool from_run_hold = g_off_pending;   /* RUN 熄灯路径: 本次为模式切换 */
+                g_off_pending = false;
                 led_blink_twice();
                 if (battery_startup_check()) {
                     sys_state = SYS_RUN;
                     g_inactivity_sec = 0;
                     g_is_dimmed = false;
                     g_off_intent = false;
-                    g_is_als_mode = true;
-                    sys_memory.params |= (1 << 8);
+                    if (from_run_hold) {
+                        g_is_als_mode = !g_is_als_mode;   /* ALS<->MAN 互切 */
+                    } else {
+                        g_is_als_mode = true;             /* 快捷: ALS 开机 */
+                    }
+                    sys_memory.params = (sys_memory.params & ~(1u << 8)) | ((g_is_als_mode ? 1u : 0u) << 8);
                     nvm_mark_dirty();
                     nvm_save_dirty();
                     mode_init();

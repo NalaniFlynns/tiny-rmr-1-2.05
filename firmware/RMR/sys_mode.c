@@ -179,8 +179,14 @@ void mode_handle_key(KeyEvent_t evt) {
     else if (evt == EVT_BOTH_LONG_5S) { 
 #if FEATURE_ALS_MODE
         if (g_als_err_lockout) {
-            /* 传感器持续故障已锁定: 拒绝切回 ALS, 闪灯提示 */
-            led_blink_twice();
+            if (g_is_als_mode) {
+                /* 当前 ALS 且传感器已锁定: 允许切回手动, 避免卡死在 ALS */
+                g_is_als_mode = false;
+                led_blink_twice();
+            } else {
+                /* 手动试图切 ALS: 拒绝, 闪灯提示 */
+                led_blink_twice();
+            }
         } else {
             g_is_als_mode = !g_is_als_mode;
             led_blink_twice();
