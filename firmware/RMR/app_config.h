@@ -215,7 +215,7 @@
 /* ==================== [7] 延时与超时配置 ==================== */
 #define CFG_MAX_LEVELS          9
 #define SNAP_THRESHOLD_BRT      50
-#define TIME_AUTO_DIM_S         3600
+#define TIME_AUTO_DIM_S         2400
 #define TIME_AUTO_SHUTDOWN_S    600
 #define DIM_LEVEL               5
 #define LVP_FLASH_PERIOD_MS     2000
