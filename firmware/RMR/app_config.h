@@ -24,7 +24,7 @@
 #endif
 /* 低功耗调试版: 1=OFF 态进 WFI/STANDBY0 彻底低功耗(忽略 NVM SWD 位, SWD 自然断开), 开机/运行态 SWD 保持, 其余特性不变 */
 #ifndef DEBUG_LP_BUILD
-#define DEBUG_LP_BUILD 0
+#define DEBUG_LP_BUILD 1
 #endif
 
 /* SR516SW 单节内阻(mΩ): 规格书未标注, 取氧化银纽扣电池典型值, 可经调试器写 NVM r_series 校准 */

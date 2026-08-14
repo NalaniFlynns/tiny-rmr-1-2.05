@@ -13,6 +13,7 @@ volatile Test_Mailbox_t g_test_box __attribute__((used)) = {
 
 #if !POWER_SAVE_BUILD
 static bool test_mode_active = false;
+static uint32_t last_synced_params = 0;   /* guard vs host cfg_params writes (race fix) */
 #endif
 
 #if !POWER_SAVE_BUILD
@@ -30,13 +31,20 @@ static void test_box_sync_cfg(void) {
     g_test_box.cfg_als_sqrt_factor = sys_memory.als_sqrt_factor;
     g_test_box.cfg_als_cap_low_x100 = sys_memory.als_cap_low_x100;
     g_test_box.cfg_als_cap_high_x100 = sys_memory.als_cap_high_x100;
+    /* sync 后更新守卫值, 避免 cfg_params 镜像冻结 (race fix 补完) */
+    last_synced_params = g_test_box.cfg_params;
 }
 #endif
 void test_mailbox_task(void) {
 #if !POWER_SAVE_BUILD
     bool auth_ok = (g_test_box.magic == TEST_MAGIC && g_test_box.host_version == g_test_box.version);
 
-    /* ===== 实时监视器刷新(每 tick) ===== */
+            /* per-tick sync: skip when host wrote cfg_params (write-config race fix): */
+    if (g_test_box.cfg_params == last_synced_params) {
+        g_test_box.cfg_params = sys_memory.params;
+        last_synced_params = g_test_box.cfg_params;
+    }   /* 每 tick 同步, 让调试器实时显示档位/ALS偏移变化 */
+        /* ===== 实时监视器刷新(每 tick) ===== */
     g_test_box.vbatt_mv = g_vbatt_mv_filtered;
     g_test_box.vbatt_raw_mv = g_vbatt_mv_raw;
     g_test_box.sys_state_mirror = sys_state;

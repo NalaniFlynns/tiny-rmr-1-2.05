@@ -166,7 +166,6 @@ int main(void) {
     DL_TimerG_startCounter(HW_PWM_INST);
 
     sys_state = SYS_OFF;
-    static uint8_t pwr_loss_cnt = 0;
     static uint8_t lvp_ext_cnt = 0;
     static uint8_t lvp_crit_cnt = 0;
     static uint32_t flash_mode_tick = 0;
@@ -219,27 +218,23 @@ int main(void) {
         if (g_tick_ms % 100 == 0) update_debug_string();
 #endif
         
-        /* 掉电保护: 保存配置后进 SHUTDOWN */
+                /* 掉电保护: 快速掉电(单次 raw < 阈值) -> 瞬间断 PWM 再立即保存, 保证擦写时序;
+           关机路径(LVP_EXT/LVP_CRIT/双键)仍为多次采样确认 */
 #if DEBUG_BUILD || DEBUG_LP_BUILD
-        /* 调试版: 直供不掉电 SHUTDOWN, 保证 SWD 全程可连; 仍保留脏配置落盘 */
+        /* 调试版: 直供不掉电 SHUTDOWN, 保证 SWD 全程可连; 掉电瞬间立即落盘 */
         if (g_vbatt_mv_raw < BATT_POWER_LOSS_MV) {
-            if (++pwr_loss_cnt >= POWERLOSS_COUNT) {
-                pwr_loss_cnt = 0;
-                nvm_save_dirty(); 
-            }
-        } else { pwr_loss_cnt = 0; }
+            nvm_save_dirty();
+        }
 #else
         if (g_vbatt_mv_raw < BATT_POWER_LOSS_MV) {
-            if (++pwr_loss_cnt >= POWERLOSS_COUNT) {
-                led_set_target(0, false); led_update_task();
-                DL_TimerG_stopCounter(HW_PWM_INST);
-                DL_GPIO_clearPins(PORT_OUTPUT, PIN_VCC_EN);
-                nvm_save_dirty(); 
-                DL_SYSCTL_setPowerPolicySHUTDOWN();
-                while(1) { __WFI(); } 
-            }
-        } else { pwr_loss_cnt = 0; }
-
+            led_set_target(0, false); led_update_task();     /* 软件关灯 */
+            DL_TimerG_setCaptureCompareValue(HW_PWM_INST, PWM_REG_MAX, HW_PWM_INDEX); /* 保险: 直接写 0% 占空比 */
+            DL_TimerG_stopCounter(HW_PWM_INST);              /* 瞬间断 PWM, 电压回升稳定 */
+            DL_GPIO_clearPins(PORT_OUTPUT, PIN_VCC_EN);
+            nvm_save_dirty();                                 /* 立即保存(断流后电压已稳定) */
+            DL_SYSCTL_setPowerPolicySHUTDOWN();
+            while(1) { __WFI(); }
+        }
 #endif
         /* 无操作自动调暗/关机 */
 #if FEATURE_INACTIVITY_AUTO_DIM_OFF
