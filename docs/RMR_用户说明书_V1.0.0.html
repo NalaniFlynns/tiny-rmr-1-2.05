@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>RMR 1:2.05 用户说明书 V1.0.0</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+    color: #1A1A1A; font-size: 10.5pt; line-height: 1.75;
+  }
+  .cover { height: 250mm; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; position: relative; }
+  .cover .brand { font-size: 11pt; letter-spacing: 6px; color: #6B7280; margin-bottom: 10px; }
+  .cover h1 { font-size: 30pt; font-weight: 700; color: #16324F; letter-spacing: 2px; }
+  .cover .sub { font-size: 15pt; color: #B3202A; margin-top: 10px; letter-spacing: 8px; }
+  .cover .rule { width: 90px; height: 3px; background: #B3202A; margin: 26px auto; }
+  .cover .ver { font-size: 12pt; color: #374151; margin-top: 6px; }
+  .cover .tags { margin-top: 40px; font-size: 9.5pt; color: #9CA3AF; letter-spacing: 3px; }
+  .cover .foot { position: absolute; bottom: 0; width: 100%; text-align: center; font-size: 8.5pt; color: #B0B7C0; letter-spacing: 2px; }
+  .pagebreak { page-break-before: always; }
+  h2 { font-size: 14pt; color: #16324F; font-weight: 700; border-left: 4px solid #B3202A; padding-left: 10px; margin: 0 0 14px 0; }
+  h3 { font-size: 11.5pt; color: #1F3A5F; margin: 16px 0 6px 0; font-weight: 600; }
+  p { margin: 6px 0; text-align: justify; }
+  ul, ol { margin: 6px 0 6px 22px; }
+  li { margin: 4px 0; }
+  .k { color: #B3202A; font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 16px 0; page-break-inside: avoid; }
+  th, td { border: 1px solid #D9DEE6; padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: #EEF2F7; color: #16324F; font-weight: 600; white-space: nowrap; }
+  tr:nth-child(even) td { background: #FAFBFD; }
+  .note { background: #F7F9FC; border: 1px solid #DCE3EC; border-left: 4px solid #B3202A; padding: 8px 12px; margin: 10px 0; font-size: 9.5pt; color: #4B5563; page-break-inside: avoid; }
+  .ops { margin: 10px 0; }
+  .ops .step { display: flex; margin: 8px 0; page-break-inside: avoid; }
+  .ops .step .k { flex: 0 0 96px; font-weight: 700; color: #B3202A; }
+  .toc { margin: 14px 0 0 0; }
+  .toc div { display: flex; border-bottom: 1px dotted #C7CFDA; padding: 7px 2px; }
+  .toc .no { color: #B3202A; font-weight: 700; margin-right: 12px; }
+  .toc .t { flex: 1; }
+  .keycap { display: inline-block; border: 1px solid #B7C0CC; border-bottom-width: 2px; border-radius: 4px; background: #F3F5F8; padding: 0 7px; font-weight: 700; color: #1F3A5F; font-size: 9.5pt; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="brand">R M R   S E R I E S</div>
+  <h1>RMR 1:2.05</h1>
+  <div class="sub">微型反射式红点瞄准镜</div>
+  <div class="rule"></div>
+  <div class="ver">用户说明书</div>
+  <div class="ver" style="margin-top:4px;">版本 V1.0.0</div>
+  <div class="tags">LED 红点 · 自动感光 · 超低功耗</div>
+  <div class="foot">2026-08-15</div>
+</div>
+
+<div class="pagebreak"></div>
+<h2>目录</h2>
+<div class="toc">
+  <div><span class="no">1</span><span class="t">产品简介</span></div>
+  <div><span class="no">2</span><span class="t">产品组成</span></div>
+  <div><span class="no">3</span><span class="t">安装与供电</span></div>
+  <div><span class="no">4</span><span class="t">开机与关机</span></div>
+  <div><span class="no">5</span><span class="t">亮度调节（手动模式）</span></div>
+  <div><span class="no">6</span><span class="t">自动感光模式</span></div>
+  <div><span class="no">7</span><span class="t">自动调暗与自动关机</span></div>
+  <div><span class="no">8</span><span class="t">低电量提示与保护</span></div>
+  <div><span class="no">9</span><span class="t">技术参数</span></div>
+  <div><span class="no">10</span><span class="t">故障排除</span></div>
+  <div><span class="no">11</span><span class="t">注意事项与维护</span></div>
+  <div><span class="no">12</span><span class="t">版本记录</span></div>
+</div>
+
+<div class="pagebreak"></div>
+<h2>1　产品简介</h2>
+<p>RMR 1:2.05 是一款采用反射式光学结构的微型红点瞄准镜。LED 红点经反射镜组成像于瞄准视场，无倍率、无遮挡，可实现快速双眼瞄准。产品内置环境光传感器，可随环境亮度自动调节红点亮度；同时提供 9 档手动亮度，兼顾强光与弱光环境。整机采用超低功耗设计，关机进入深度待机后电流小于 1 微安。</p>
+<h3>主要特点</h3>
+<ul>
+  <li>1 倍反射式光学结构，红点清晰、瞄准迅速</li>
+  <li>红光 LED 红点，9 档手动亮度（0–8）</li>
+  <li>自动感光模式，红点亮度随环境光自动调节</li>
+  <li>档位、模式、偏移等设置自动记忆，更换电池不丢失</li>
+  <li>无操作 40 分钟自动调暗、累计 90 分钟自动关机</li>
+  <li>低电压保护：闪烁提示、自动关机，防止电池过放</li>
+  <li>关机深度待机电流小于 1 微安，续航持久</li>
+</ul>
+
+<h2>2　产品组成</h2>
+<ul>
+  <li>镜体：含红点窗口与反射镜组</li>
+  <li>光感窗口：自动感光模式采集环境光</li>
+  <li>亮度调节键：<span class="keycap">＋</span> 键（加亮）与 <span class="keycap">−</span> 键（减暗）</li>
+  <li>电池仓（电池版）／电源引线（直连版）</li>
+</ul>
+
+<h2>3　安装与供电</h2>
+<h3>3.1　安装</h3>
+<p>将瞄准镜底座与导轨对齐，调整至合适的前后位置后拧紧固定螺钉，确认安装牢固无松动。安装完成后目视检查红点成像清晰、视场无遮挡。</p>
+<h3>3.2　电池版供电</h3>
+<p>打开电池仓盖，按照仓内正负极标记装入两节 SR516SW 纽扣电池，合上仓盖即完成供电。</p>
+<h3>3.3　直连版供电</h3>
+<p>将电源引线接入 1.6–3.6V 直流电源，注意正负极连接正确。</p>
+<div class="note">请使用合格的直流电源，输入电压不得超过 3.6V，否则可能损坏产品。</div>
+
+<h2>4　开机与关机</h2>
+<h3>4.1　自动开机</h3>
+<p>出厂默认开启“上电自动开机”。电池版装入电池、直连版接通电源后，瞄准镜自动开机点亮红点。</p>
+<h3>4.2　手动开机</h3>
+<div class="ops"><div class="step"><span class="k">操作</span><span>关机状态下，同时按住 <span class="keycap">＋</span> 与 <span class="keycap">−</span> 两键约 1.5 秒，红点亮起即开机。</span></div></div>
+<div class="note">供电电压过低（低于约 2.2V）时产品将拒绝开机，红点短闪一次提示，请更换电池或检查电源。</div>
+<h3>4.3　关机</h3>
+<div class="ops"><div class="step"><span class="k">操作</span><span>开机状态下，同时按住两键约 1.5 秒，红点熄灭后松开两键，即进入关机（深度待机）状态。</span></div></div>
+<div class="note">红点熄灭后若继续按住两键不放，满 5 秒时将切换“手动 / 自动感光”模式并重新点亮，不会关机。</div>
+<h3>4.4　快捷开机</h3>
+<p>关机状态下，同时按住两键满 5 秒，可直接以“自动感光”模式开机。</p>
+
+<h2>5　亮度调节（手动模式）</h2>
+<div class="ops">
+  <div class="step"><span class="k">加亮</span><span>短按 <span class="keycap">＋</span> 键，亮度加一档。</span></div>
+  <div class="step"><span class="k">减暗</span><span>短按 <span class="keycap">−</span> 键，亮度减一档。</span></div>
+</div>
+<p>手动模式共 9 档亮度（0–8），出厂默认第 4 档。每次按键红点亮度即时变化，设置自动保存，下次开机保持上次档位。</p>
+
+<h2>6　自动感光模式</h2>
+<h3>6.1　模式切换</h3>
+<p>开机状态下，同时按住两键满 5 秒，红点闪烁两次，在“手动模式”与“自动感光模式”之间切换，当前模式自动保存。</p>
+<h3>6.2　自动感光</h3>
+<p>自动感光模式下，红点亮度由环境光传感器实时调节：环境暗则自动变暗，环境亮则自动变亮，保证红点清晰可见且不刺眼。</p>
+<h3>6.3　亮度偏移</h3>
+<p>自动感光模式下，短按 <span class="keycap">＋</span> / <span class="keycap">−</span> 键可调节整体亮度偏移（0–4 档，出厂默认第 2 档）。弱光环境建议调低偏移，强光环境建议调高偏移，偏移值自动保存。</p>
+<h3>6.4　故障保护</h3>
+<p>若光感传感器异常，红点将以约 1.5 秒周期闪烁提示，10 秒后自动退回手动模式；连续多次故障后将锁定在手动模式，避免反复提示干扰使用。</p>
+
+<h2>7　自动调暗与自动关机</h2>
+<ul>
+  <li>开机后 40 分钟内无任何按键操作，红点自动调暗至最低亮度，以节省电能。</li>
+  <li>调暗后继续无操作 50 分钟（累计 90 分钟），产品自动关机。</li>
+  <li>任意按键操作将重置计时并恢复红点亮度。</li>
+</ul>
+
+<h2>8　低电量提示与保护</h2>
+<ul>
+  <li>供电电压低于约 2.3V 时：进入低电量保护状态，红点亮度自动降低，并以约 2 秒周期短闪提示，请及时更换电池或补充供电。</li>
+  <li>供电电压低于约 2.1V 时：产品自动关机，防止电池过放损坏。</li>
+  <li>更换电池或电压恢复到约 2.4V 以上后，即可正常开机使用。</li>
+  <li>掉电保护：使用中电源突然中断时，产品会立即保存当前设置，设置不丢失。</li>
+</ul>
+
+<h2>9　技术参数</h2>
+<table>
+  <tr><th style="width:32%;">项目</th><th>参数</th></tr>
+  <tr><td>产品型号</td><td>RMR 1:2.05</td></tr>
+  <tr><td>光学结构</td><td>1 倍反射式红点</td></tr>
+  <tr><td>红点光源</td><td>红光 LED（正向电压约 2.2V，最大电流 2.8mA）</td></tr>
+  <tr><td>亮度</td><td>手动 9 档（0–8）＋ 自动感光（偏移 0–4）</td></tr>
+  <tr><td>供电（电池版）</td><td>2 × SR516SW 氧化银纽扣电池（新电池约 3.1V）</td></tr>
+  <tr><td>供电（直连版）</td><td>1.6–3.6V 直流</td></tr>
+  <tr><td>工作电流</td><td>最大约 4mA</td></tr>
+  <tr><td>待机电流</td><td>小于 1µA（深度待机）</td></tr>
+  <tr><td>低电压提示</td><td>约 2.3V</td></tr>
+  <tr><td>低压自动关机</td><td>约 2.1V</td></tr>
+  <tr><td>自动调暗</td><td>40 分钟无操作</td></tr>
+  <tr><td>自动关机</td><td>累计 90 分钟无操作（调暗后 50 分钟）</td></tr>
+</table>
+
+<h2>10　故障排除</h2>
+<table>
+  <tr><th style="width:34%;">现象</th><th>处理方法</th></tr>
+  <tr><td>红点不亮、无法开机</td><td>检查电池是否装入且电量充足；直连版检查电源电压（需高于约 2.2V）；确认操作为同时按住两键约 1.5 秒。</td></tr>
+  <tr><td>红点每 2 秒短闪</td><td>低电量提示，请更换电池或补充供电。</td></tr>
+  <tr><td>红点以 1.5 秒周期闪烁</td><td>光感传感器异常提示，10 秒后自动退回手动模式；若反复出现请联系售后。</td></tr>
+  <tr><td>亮度不随环境变化</td><td>确认当前处于“自动感光”模式（双键按住满 5 秒切换）。</td></tr>
+  <tr><td>无法开机但红点短闪一次</td><td>供电电压不足（低于约 2.2V），请更换电池或检查电源。</td></tr>
+</table>
+
+<h2>11　注意事项与维护</h2>
+<ul>
+  <li>请勿直视红点光源，避免强光直射眼睛。</li>
+  <li>电池请按正负极方向正确安装；长期不使用请取出电池（电池版）。</li>
+  <li>直连版请使用 1.6–3.6V 直流电源，过高电压会损坏产品。</li>
+  <li>避免强烈撞击、跌落与挤压，请勿自行拆解或改装。</li>
+  <li>清洁光学窗口时请使用干净软布轻轻擦拭，避免划伤；请勿使用有机溶剂。</li>
+  <li>请勿将产品长时间置于高温、高湿或阳光暴晒环境。</li>
+  <li>本说明书以 V1.0.0 固件功能为准，后续更新恕不另行通知。</li>
+</ul>
+
+<h2>12　版本记录</h2>
+<table>
+  <tr><th style="width:18%;">版本</th><th style="width:28%;">日期</th><th>说明</th></tr>
+  <tr><td>V1.0.0</td><td>2026-08-15</td><td>首版发布</td></tr>
+</table>
+
+</body>
+</html>
