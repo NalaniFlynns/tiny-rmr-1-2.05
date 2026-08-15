@@ -7,6 +7,7 @@
 #include <QGridLayout>
 #include <QHeaderView>
 #include <QMessageBox>
+#include <QDateTime>
 #include <QFileDialog>
 #include <QSqlQuery>
 #include <QFile>
@@ -1463,7 +1464,7 @@ void MainWindow::addProbeToUI(uint32_t sn, ProbeType type, bool useXdsAdapter) {
 
     QCheckBox *chkAuto = new QCheckBox("Enabled");
     chkAuto->setChecked(false);
-    connect(chkAuto, &QCheckBox::toggled, w, [w](bool checked){ w->autoFlashEnabled = checked; });
+    connect(chkAuto, &QCheckBox::toggled, w, [w](bool checked){ w->autoFlashEnabled = checked; if (checked) w->resetAutoFlash(); });
     QWidget *wAuto = new QWidget(); QHBoxLayout *lAuto = new QHBoxLayout(wAuto);
     lAuto->addWidget(chkAuto); lAuto->setAlignment(Qt::AlignCenter); lAuto->setContentsMargins(0,0,0,0);
     probeTable->setCellWidget(row, 5, wAuto);
@@ -1791,8 +1792,39 @@ void MainWindow::onLog(uint32_t sn, const QString& text) {
 
 void MainWindow::onMsg(uint32_t sn, const QString& title, const QString& text) {
     QJsonObject m1; m1["type"]="msg"; m1["sn"]=QString::number(sn); m1["title"]=title; m1["text"]=text; ipcBroadcast(m1);
-    if(title == "Error") QMessageBox::critical(this, title, QString("[SN: %1] ").arg(sn) + text);
-    else QMessageBox::information(this, title, QString("[SN: %1] ").arg(sn) + text);
+    /* 统一走单一模态框: 重复消息只弹一个, 关闭后短时间内不再重复弹出 */
+    showModalMsg(title, QString("[SN: %1] ").arg(sn) + text, title == "Error");
+}
+
+void MainWindow::showModalMsg(const QString& title, const QString& text, bool critical) {
+    QString key = title + QChar(1) + text;
+    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (modalMsgBox && modalMsgBox->isVisible()) {
+        /* 已有弹窗打开: 同内容去重, 不同内容直接更新并置顶, 不叠加新窗口 */
+        if (modalMsgBox->windowTitle() == title && modalMsgBox->text() == text) return;
+        modalMsgBox->setWindowTitle(title);
+        modalMsgBox->setText(text);
+        modalMsgBox->setIcon(critical ? QMessageBox::Critical : QMessageBox::Information);
+        modalMsgBox->raise(); modalMsgBox->activateWindow();
+        return;
+    }
+    /* 刚关闭过的同一条消息 5s 内不再重复弹窗 */
+    if (key == lastModalMsgKey && now - lastModalMsgMs < 5000) return;
+    if (modalMsgBox) { delete modalMsgBox; modalMsgBox = nullptr; }
+    modalMsgBox = new QMessageBox(this);
+    modalMsgBox->setWindowTitle(title);
+    modalMsgBox->setText(text);
+    modalMsgBox->setIcon(critical ? QMessageBox::Critical : QMessageBox::Information);
+    modalMsgBox->setModal(true);
+    connect(modalMsgBox, &QMessageBox::finished, this, [this, key](int){
+        lastModalMsgKey = key;
+        lastModalMsgMs = QDateTime::currentMSecsSinceEpoch();
+        modalMsgBox->deleteLater();
+        modalMsgBox = nullptr;
+    });
+    modalMsgBox->show();
+    lastModalMsgKey = key;
+    lastModalMsgMs = now;
 }
 
 void MainWindow::onAutoTestRes(uint32_t sn, bool success, const QString& msg) {
@@ -1801,7 +1833,7 @@ void MainWindow::onAutoTestRes(uint32_t sn, bool success, const QString& msg) {
     lblPassFail->setText(success ? "PASS" : "FAIL");
     lblPassFail->setStyleSheet(success ? "background-color: #198754; color: white; font-size: 20pt; font-weight: bold; border-radius: 4px;"
                                        : "background-color: #DC3545; color: white; font-size: 20pt; font-weight: bold; border-radius: 4px;");
-    if(!success) QMessageBox::critical(this, "Auto Test Failed", msg);
+    if(!success) showModalMsg("Auto Test Failed", msg, true);
 }
 
 void MainWindow::onConfigRead(uint32_t sn, const QVariantMap& cfg) {

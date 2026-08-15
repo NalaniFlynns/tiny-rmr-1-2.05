@@ -97,6 +97,7 @@ public:
     virtual void enqueueCommand(const Command& cmd) { QMutexLocker lock(&queueMutex); cmdQueue.push(cmd); }
     virtual void stop() { running = false; }
     virtual void setSpeed(int khz) { currentSpeedKHz = khz; speedNeedsUpdate = true; }
+    void resetAutoFlash() { targetFlashedThisSession = false; }
 
     uint32_t probeSN;
     ProbeType probeType;

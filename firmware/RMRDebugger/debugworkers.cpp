@@ -304,6 +304,7 @@ bool JLinkWorker::initJLink() {
 bool JLinkWorker::checkTargetConnected() { return jlinkConnect() >= 0; }
 void JLinkWorker::run() {
     if (!initJLink()) { emit sigStatus(probeSN, 0, "DLL Error!"); return; }
+    bool probeUp = false; int loopCounter = 0;
     while (running) {
         if (!jlinkIsConnected()) {
             if (probeSN != 0 && jlinkSelectBySN) jlinkSelectBySN(probeSN);
@@ -314,16 +315,25 @@ void JLinkWorker::run() {
                 jlinkExec("SelectInterface = SWD", nullptr, 0); jlinkExec(QString("Speed = %1").arg(currentSpeedKHz).toLocal8Bit().constData(), nullptr, 0);
                 speedNeedsUpdate = false;
             }
-            if (!openSuccess) { msleep(1000); continue; }
+            if (!openSuccess) {
+                if (probeUp) {
+                    probeUp = false;
+                    if (wasConnected) { wasConnected = false; targetFlashedThisSession = false; emit sigStatus(probeSN, 0, "Probe Lost..."); emit sigUuid(probeSN, "-"); emit sigFwVer(probeSN, "N/A"); }
+                    else emit sigStatus(probeSN, 0, "Awaiting Probe...");
+                }
+                msleep(1000); continue;
+            }
+            probeUp = true;
         }
         bool targetConnected = checkTargetConnected();
         if (targetConnected) {
             if (!wasConnected) {
                 wasConnected = true; emit sigStatus(probeSN, 1, "Target Connected"); emit sigUuid(probeSN, readUuidGeneric());
                 emit sigLog(probeSN, "[SYS] J-Link successfully connected to Target MCU.");
-                if (autoFlashEnabled && !fwPath.isEmpty() && !targetFlashedThisSession) {
-                    targetFlashedThisSession = true; enqueueCommand(Command(CmdType::FLASH, 0, 0, fwPath));
-                }
+            }
+            /* 自动烧录: 持续检查而不是只在连接瞬间判断, 勾选/选固件晚于连接时也能触发 */
+            if (autoFlashEnabled && !fwPath.isEmpty() && !targetFlashedThisSession) {
+                targetFlashedThisSession = true; enqueueCommand(Command(CmdType::FLASH, 0, 0, fwPath));
             }
             if (speedNeedsUpdate) { jlinkExec(QString("Speed = %1").arg(currentSpeedKHz).toLocal8Bit().constData(), nullptr, 0); speedNeedsUpdate = false; }
         } else {
@@ -334,6 +344,12 @@ void JLinkWorker::run() {
         if (hasCmd) processCommandGeneric(cmd);
         else if (targetConnected && enablePolling) { pollTelemetryGeneric(); msleep(qMax(20, pollIntervalMs)); }
         else msleep(100);
+        /* 周期状态刷新: 每 ~5s 一次, 保证 UI 状态实时更新 */
+        if (++loopCounter >= 50) {
+            loopCounter = 0;
+            if (!probeUp) emit sigStatus(probeSN, 0, "Awaiting Probe...");
+            else emit sigStatus(probeSN, targetConnected ? 1 : 0, targetConnected ? "Target Connected" : "Awaiting Target...");
+        }
     }
     jlinkClose();
 }
@@ -426,7 +442,7 @@ bool OpenOcdWorker::checkTargetConnected() {
     return true;
 }
 void OpenOcdWorker::run() {
-    tclSocket = new QTcpSocket(); bool probeConnected = false; bool initialized = false; int pollCounter = 0;
+    tclSocket = new QTcpSocket(); bool probeConnected = false; bool initialized = false; int loopCounter = 0;
     while (running) {
         if (!probeConnected) {
             startOpenOCD(); tclSocket->connectToHost("127.0.0.1", tclPort);
@@ -469,8 +485,9 @@ void OpenOcdWorker::run() {
                 wasConnected = true; emit sigStatus(probeSN, 1, "Target Connected"); emit sigUuid(probeSN, readUuidGeneric());
                 emit sigFwVer(probeSN, readFwVersionGeneric());
                 emit sigLog(probeSN, "[SYS] Target MCU connected via SWD.");
-                if (autoFlashEnabled && !fwPath.isEmpty() && !targetFlashedThisSession) { targetFlashedThisSession = true; enqueueCommand(Command(CmdType::FLASH, 0, 0, fwPath)); }
             }
+            /* 自动烧录: 持续检查而不是只在连接瞬间判断, 勾选/选固件晚于连接时也能触发 */
+            if (autoFlashEnabled && !fwPath.isEmpty() && !targetFlashedThisSession) { targetFlashedThisSession = true; enqueueCommand(Command(CmdType::FLASH, 0, 0, fwPath)); }
             pumpOpenOCDLogs(false);
         } else {
             if (wasConnected) { wasConnected = false; targetFlashedThisSession = false; emit sigStatus(probeSN, 0, "Awaiting Target..."); emit sigUuid(probeSN, "-"); emit sigFwVer(probeSN, "N/A"); }
@@ -479,13 +496,27 @@ void OpenOcdWorker::run() {
         if (targetConnected && speedNeedsUpdate) { sendTclCommand(QString("adapter speed %1").arg(currentSpeedKHz), 500, false); speedNeedsUpdate = false; }
         Command cmd; bool hasCmd = false;
         { QMutexLocker lock(&queueMutex); if (!cmdQueue.empty()) { cmd = cmdQueue.front(); cmdQueue.pop(); hasCmd = true; } }
-        if (hasCmd) { processCommandGeneric(cmd); pollCounter = 0; }
+        if (hasCmd) { processCommandGeneric(cmd); }
         else if (targetConnected && enablePolling) { pollTelemetryGeneric(); msleep(qMax(20, pollIntervalMs)); }
         else msleep(100);
-        /* 周期性确认连接(每 ~5s 一次, 避免每次轮询多一次往返) */
-        if (wasConnected && (++pollCounter >= 50) && enablePolling) {
-            pollCounter = 0;
-            if (!checkTargetConnected()) { wasConnected = false; targetFlashedThisSession = false; initialized = false; emit sigStatus(probeSN, 0, "Target Lost..."); emit sigUuid(probeSN, "-"); emit sigFwVer(probeSN, "N/A"); }
+        /* 周期状态刷新 + 连接确认: 每 ~5s 一次, 与轮询开关无关, 保证 UI 状态实时更新 */
+        if (++loopCounter >= 50) {
+            loopCounter = 0;
+            if (probeConnected && (!tclSocket || tclSocket->state() != QAbstractSocket::ConnectedState)) {
+                probeConnected = false; initialized = false;
+                if (wasConnected) { wasConnected = false; targetFlashedThisSession = false; emit sigStatus(probeSN, 0, "Probe Lost..."); emit sigUuid(probeSN, "-"); emit sigFwVer(probeSN, "N/A"); }
+                else emit sigStatus(probeSN, 0, "Awaiting Probe...");
+            } else if (wasConnected) {
+                if (!checkTargetConnected()) {
+                    wasConnected = false; targetFlashedThisSession = false; initialized = false; probeConnected = false;
+                    emit sigStatus(probeSN, 0, "Target Lost..."); emit sigUuid(probeSN, "-"); emit sigFwVer(probeSN, "N/A");
+                    stopOpenOCD(); tclSocket = new QTcpSocket();
+                } else {
+                    emit sigStatus(probeSN, 1, "Target Connected");
+                }
+            } else {
+                emit sigStatus(probeSN, 0, initialized ? "Target Unresponsive" : "Awaiting Probe...");
+            }
         }
     }
     stopOpenOCD();

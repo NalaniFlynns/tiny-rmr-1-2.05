@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QTabWidget>
 #include <QPushButton>
+#include <QMessageBox>
 #include <QComboBox>
 #include <QGroupBox>
 #include <QMap>
@@ -89,6 +90,7 @@ private:
     void setupIpc();
     void applyTheme();
     void setFwPath(const QString& path);
+    void showModalMsg(const QString& title, const QString& text, bool critical);
     void ipcSend(QTcpSocket *s, const QJsonObject& obj);
     void ipcBroadcast(const QJsonObject& obj);
     void ipcSendHello(QTcpSocket *s);
@@ -205,4 +207,8 @@ private:
     QHash<uint32_t, QString> lastFwVer;
     QHash<uint32_t, int> lastStatusCode;
     QHash<uint32_t, QString> lastStatusMsg;
+
+    QMessageBox *modalMsgBox = nullptr;
+    QString lastModalMsgKey;
+    qint64 lastModalMsgMs = 0;
 };
