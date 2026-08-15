@@ -601,9 +601,14 @@ void MainWindow::setupUI() {
     hl->addWidget(txtUuid);
 
     btnDxf = new QPushButton("显示DM码");
-    btnDxf->setToolTip("点击显示当前设备 UUID 的 DataMatrix 码");
+    btnDxf->setToolTip("点击显示/隐藏当前设备 UUID 的小 DM 码");
     connect(btnDxf, &QPushButton::clicked, this, &MainWindow::showDmCode);
     hl->addWidget(btnDxf);
+    dmPreview = new QLabel();
+    dmPreview->setFixedSize(96, 96);
+    dmPreview->setStyleSheet("border: 1px solid #AAA; background: white;");
+    dmPreview->hide();
+    hl->addWidget(dmPreview);
 
     lblVer = new QLabel("FW: N/A");
     lblVer->setStyleSheet("font-weight: bold; border: none; padding-left: 5px;");
@@ -1710,24 +1715,18 @@ void MainWindow::updateLed() {
 }
 
 void MainWindow::showDmCode() {
+    /* 点击在按钮旁显示/隐藏一个小的 DM 码 */
+    if (dmPreview && dmPreview->isVisible()) { dmPreview->hide(); return; }
     uint32_t sn = cmbActiveProbe->currentData().toUInt();
     QString uuid = probeUuids.value(sn);
     if (uuid.isEmpty()) { showModalMsg("Error", "请先连接探针并读取 UUID。", true); return; }
-    QImage img = DataMatrix::renderImage(uuid, 10, 4);
+    QImage img = DataMatrix::renderImage(uuid, 4, 2);
     if (img.isNull()) { showModalMsg("Error", "DM 码生成失败。", true); return; }
-    QDialog dlg(this);
-    dlg.setWindowTitle("设备 DM 码");
-    QVBoxLayout *lay = new QVBoxLayout(&dlg);
-    QLabel *lbl = new QLabel(&dlg);
-    lbl->setPixmap(QPixmap::fromImage(img).scaled(300, 300, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    lbl->setAlignment(Qt::AlignCenter);
-    QLabel *txt = new QLabel(uuid, &dlg);
-    txt->setAlignment(Qt::AlignCenter);
-    txt->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    QPushButton *ok = new QPushButton("关闭", &dlg);
-    connect(ok, &QPushButton::clicked, &dlg, &QDialog::accept);
-    lay->addWidget(lbl); lay->addWidget(txt); lay->addWidget(ok, 0, Qt::AlignCenter);
-    dlg.exec();
+    if (dmPreview) {
+        dmPreview->setPixmap(QPixmap::fromImage(img).scaled(92, 92, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        dmPreview->setToolTip(uuid);
+        dmPreview->show();
+    }
 }
 
 void MainWindow::onStatus(uint32_t sn, int code, const QString& msg) {

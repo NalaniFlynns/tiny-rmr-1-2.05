@@ -128,6 +128,7 @@ private:
     QComboBox *cmbSpeed;
     QLineEdit *txtUuid;
     QPushButton *btnDxf;
+    QLabel *dmPreview = nullptr;
     QLabel *lblVer;
 
     QLineEdit *txtFwPath;

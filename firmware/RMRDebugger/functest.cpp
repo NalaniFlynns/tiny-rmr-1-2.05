@@ -138,6 +138,8 @@ void FuncTestPanel::startTest(uint32_t sn) {
     m_ledRestored = false;
     m_physKeysBlocked = false;
     m_pollFast = false;
+    m_alsSwitched = false;
+    m_ledVbatStart = 0;
     m_stepState.fill(0, 6);
     for (int i = 0; i < 6; i++) {
         m_stepTable->item(i, 0)->setForeground(QColor("#333333"));
@@ -159,16 +161,13 @@ void FuncTestPanel::startTest(uint32_t sn) {
 void FuncTestPanel::stopTest() {
     if (!m_running) return;
     m_running = false;
-    m_timer->stop();
-    /* 清理: 恢复 LED / 按键 / 轮询 */
-    if (!m_ledRestored) sendCmd(Command(CmdType::WRITE_8, OFS_OVR_LED_MODE, 0));
-    if (m_physKeysBlocked) { sendCmd(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0)); m_physKeysBlocked = false; }
-    if (m_pollFast && m_pollCtrl) { m_pollCtrl(m_sn, false); m_pollFast = false; }
-    m_result->setText("已停止");
-    m_result->setStyleSheet("font-size: 26pt; font-weight: bold; color: #6C757D; border: 1px solid #CCC; border-radius: 6px; background: #F8F9FA;");
-    m_btnStart->setEnabled(true);
-    m_btnStop->setEnabled(false);
-    setInstruction("测试已停止。可修复后重新点击“开始测试”。");
+    m_resultPendingOk = false;
+    m_resultPendingReason = "测试被手动停止";
+    if (m_alsSwitched) {
+        setPhase(PhRestoreMode);
+    } else {
+        completeFinish(false, "测试被手动停止");
+    }
     emit sigLog("[FUNC] 功能测试被手动停止");
 }
 
@@ -187,9 +186,21 @@ void FuncTestPanel::setPhase(Phase p) {
         break;
     case PhLed:
         setStepState(0, 1);
+        m_ledVbatStart = m_tele.value("vbatt").toInt();
         setInstruction("LED 测试：正在点亮 LED 并回读 PWM 判断是否正常…");
         sendCmd(Command(CmdType::WRITE_8, OFS_OVR_LED_MODE, 1));
         sendCmd(Command(CmdType::WRITE_16, OFS_OVR_PWM_VAL, 1200));
+        break;
+    case PhSetAls:
+        setInstruction("正在切换到自动感光(ALS)模式…");
+        /* 已处于 ALS 则直接跳过, 否则虚拟双键按住 5s 触发模式切换 */
+        if (m_tele.contains("cfg_params") && ((m_tele["cfg_params"].toUInt() >> 8) & 1u) != 0) {
+            setPhase(PhAlsDark);
+        } else {
+            sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
+            sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
+            m_alsSwitched = true;
+        }
         break;
     case PhAlsDark:
         setStepState(1, 1);
@@ -216,7 +227,12 @@ void FuncTestPanel::setPhase(Phase p) {
         break;
     case PhDm:
         setStepState(5, 1);
-        setInstruction("DM 码：正在生成并显示设备 DM 码，请用扫码枪扫描确认…");
+        setInstruction("DM 码：正在生成设备 DM 码…");
+        break;
+    case PhRestoreMode:
+        setInstruction("测试结束：正在恢复原工作模式…");
+        sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
+        sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
         break;
     case PhDone:
     case PhIdle:
@@ -248,7 +264,8 @@ void FuncTestPanel::sendCmd(const Command& c) {
 }
 
 void FuncTestPanel::tick() {
-    if (!m_running) return;
+    if (!m_running && m_phase != PhRestoreMode) return;   /* 恢复模式在 m_running=false 后仍需继续 */
+    if (m_phase == PhIdle) return;
     qint64 elapsed = m_phaseClock.elapsed();
 
     switch (m_phase) {
@@ -269,8 +286,9 @@ void FuncTestPanel::tick() {
                 sendCmd(Command(CmdType::WRITE_8, OFS_OVR_LED_MODE, 0));
                 m_ledRestored = true;
                 setStepState(0, 2);
-                emit sigLog(QString("[FUNC] LED PASS (PWM 回显=%1)").arg(pwm));
-                setPhase(PhAlsDark);
+                emit sigLog(QString("[FUNC] LED PASS (PWM 回显=%1, VBAT 跌落=%2mV)")
+                    .arg(pwm).arg(qMax(0, m_ledVbatStart - m_tele.value("vbatt").toInt())));
+                setPhase(PhSetAls);
                 break;
             }
         }
@@ -354,6 +372,32 @@ void FuncTestPanel::tick() {
         if (elapsed > 5000) finish(false, "按键 BT2 未松开：请确认按键已释放。");
         break;
     }
+    case PhSetAls: {
+        if (m_tele.contains("cfg_params") && ((m_tele["cfg_params"].toUInt() >> 8) & 1u) != 0) {
+            sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
+            sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
+            emit sigLog("[FUNC] 已切换到自动感光(ALS)模式");
+            setPhase(PhAlsDark);
+            break;
+        }
+        if (elapsed > 9000) {
+            sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
+            sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
+            finish(false, "切换到自动感光模式超时(5s双键切换未生效)。");
+        }
+        break;
+    }
+    case PhRestoreMode: {
+        bool alsNow = m_tele.contains("cfg_params") && (((m_tele["cfg_params"].toUInt() >> 8) & 1u) != 0);
+        if (!alsNow || elapsed > 9000) {
+            sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
+            sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
+            emit sigLog("[FUNC] 已恢复原工作模式");
+            completeFinish(m_resultPendingOk, m_resultPendingReason);
+            break;
+        }
+        break;
+    }
     case PhDm: {
         QString uuid = m_getUuid ? m_getUuid(m_sn) : QString();
         if (uuid.isEmpty()) {
@@ -380,6 +424,18 @@ void FuncTestPanel::tick() {
 }
 
 void FuncTestPanel::finish(bool ok, const QString& reason) {
+    /* 若测试中切过 ALS 模式, 先恢复原模式再收尾; 否则直接收尾 */
+    m_resultPendingOk = ok;
+    m_resultPendingReason = reason;
+    if (m_alsSwitched) {
+        m_running = false;
+        setPhase(PhRestoreMode);
+    } else {
+        completeFinish(ok, reason);
+    }
+}
+
+void FuncTestPanel::completeFinish(bool ok, const QString& reason) {
     m_running = false;
     m_timer->stop();
     /* 清理 */

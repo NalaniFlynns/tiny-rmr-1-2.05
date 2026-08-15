@@ -34,14 +34,15 @@ signals:
 
 private:
     enum Phase {
-        PhIdle, PhPowerOn, PhLed, PhAlsDark, PhAlsBright,
-        PhKeyBT1, PhKeyBT1Rel, PhKeyBT2, PhKeyBT2Rel, PhDm, PhDone
+        PhIdle, PhPowerOn, PhLed, PhSetAls, PhAlsDark, PhAlsBright,
+        PhKeyBT1, PhKeyBT1Rel, PhKeyBT2, PhKeyBT2Rel, PhDm, PhRestoreMode, PhDone
     };
     void tick();
     void setPhase(Phase p);
     void setInstruction(const QString& s);
     void setStepState(int idx, int state);   /* 0 wait, 1 run, 2 pass, 3 fail */
     void finish(bool ok, const QString& reason);
+    void completeFinish(bool ok, const QString& reason);
     void sendCmd(const Command& c);
     bool hasState(int state) const;
 
@@ -54,6 +55,10 @@ private:
     bool m_ledRestored = false;
     bool m_physKeysBlocked = false;
     bool m_pollFast = false;
+    bool m_alsSwitched = false;
+    bool m_resultPendingOk = false;
+    QString m_resultPendingReason;
+    int m_ledVbatStart = 0;
 
     QLabel *m_instr = nullptr;
     QLabel *m_result = nullptr;
