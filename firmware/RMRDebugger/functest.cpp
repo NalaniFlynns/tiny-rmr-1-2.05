@@ -12,11 +12,16 @@
 #include <QPixmap>
 #include <QDateTime>
 #include <QFont>
+#include <algorithm>
 
 /* ============================================================================
  * 功能测试插件 (FuncTestPanel)
- * 步骤: 开机 -> LED(PWM回显) -> 光感暗 -> 光感亮 -> BT1 -> BT2 -> DM码 -> PASS/FAIL
+ * 步骤: 开机 -> LED(关灯基准/全亮压降/PWM回显 -> 开路短路判定) -> 光感暗 -> 光感亮
+ *       -> BT1 -> BT2 -> DM码 -> PASS/FAIL
  * 自动判定, 操作员仅需按提示遮挡光感 / 按按键。全部通过显示绿色 PASS。
+ * - LED 开路/短路: 全亮时 VBAT 压降(开路≈0mV/正常 20-130mV/短路>250mV),
+ *   接入 PowerZ 时用真实电流变化交叉验证(开路无变化/短路远大于额定)。
+ * - 掉线保护: 遥测中断>2.5s 自动暂停倒计时等待重连, 恢复后继续。
  * ========================================================================== */
 
 namespace {
@@ -28,18 +33,27 @@ const QStringList kStepNames = {
     "按键 BT2(-)",
     "DM 码显示",
 };
-/* 阈值 (与固件 OPT3001 一致: lux_raw 即 lux) */
-constexpr int kAlsDarkLux   = 1000;
-constexpr int kAlsBrightLux = 4000;
+/* 光感阈值: OPT3001 分辨率为 0.01 lux/bit, 固件 lux_raw 即 0.01 lux, 真实 lux = lux_raw/100 */
+constexpr int kAlsDarkLux   = 10;      /* 真实 lux: 遮挡后须 < 10 lux */
+constexpr int kAlsBrightLux = 40;      /* 真实 lux: 见光后须 > 40 lux */
 constexpr int kKeyTimeoutMs = 20000;
 constexpr int kAlsTimeoutMs = 25000;
-constexpr int kLedTimeoutMs = 4000;
+constexpr int kLedStageTimeoutMs = 6000;
+/* LED 全亮压降判定 (mV): 开路≈0, 正常 20-130(电池版), 短路 >250 */
+constexpr int kLedOpenDropMv  = 8;
+constexpr int kLedShortDropMv = 250;
+/* PowerZ 真实电流变化判定 (mA): 开路≈0, 正常 ≈ 固件模型 i_avg, 短路远超额定 */
+constexpr double kPzOpenDeltaMa  = 0.5;
+constexpr double kPzShortDeltaMa = 5.0;
+/* 掉线保护: 遥测超过 2.5s 视为掉线暂停; 暂停超 2min 中止 */
+constexpr qint64 kTeleStaleMs   = 2500;
+constexpr qint64 kPauseLimitMs  = 120000;
 }
 
 FuncTestPanel::FuncTestPanel(QWidget *parent) : QWidget(parent) {
     QVBoxLayout *v = new QVBoxLayout(this);
 
-    QLabel *title = new QLabel("功能测试插件 (引导式自动判定)");
+    QLabel *title = new QLabel("功能测试插件 (自动判定)");
     title->setStyleSheet("font-size: 13pt; font-weight: bold; color: #004085; border: none;");
     v->addWidget(title);
 
@@ -85,6 +99,7 @@ FuncTestPanel::FuncTestPanel(QWidget *parent) : QWidget(parent) {
     QHBoxLayout *hLive = new QHBoxLayout();
     m_live = new QLabel("PWM: - | Lux: - | BT1: - | BT2: - | VBAT: -");
     m_live->setStyleSheet("font-family: Consolas; font-size: 9pt; color: #555; border: none;");
+    m_live->setMinimumHeight(14);
     hLive->addWidget(m_live);
     hLive->addStretch();
     v->addLayout(hLive);
@@ -113,16 +128,80 @@ void FuncTestPanel::setCommandSender(std::function<void(const Command&)> sender)
 void FuncTestPanel::setUuidGetter(std::function<QString(uint32_t)> getter) { m_getUuid = std::move(getter); }
 void FuncTestPanel::setActiveSnProvider(std::function<uint32_t()> provider) { m_getActiveSn = std::move(provider); }
 void FuncTestPanel::setPollingController(std::function<void(uint32_t, bool)> ctrl) { m_pollCtrl = std::move(ctrl); }
+void FuncTestPanel::setPowerZProvider(std::function<QVariantMap()> provider) { m_pzProvider = std::move(provider); }
 
 void FuncTestPanel::updateTelemetry(uint32_t sn, const QVariantMap& data) {
     if (sn == m_sn) {
         m_tele = data;
-        m_live->setText(QString("PWM: %1 | Lux: %2 | BT1: %3 | BT2: %4 | VBAT: %5mV")
-            .arg(data.value("pwm").toString())
-            .arg(data.value("lux_raw").toString())
-            .arg(data.value("raw_k_m").toString())
-            .arg(data.value("raw_k_p").toString())
-            .arg(data.value("vbatt").toString()));
+        m_teleSeen = true;
+        m_teleClock.restart();
+        updateLive();
+    }
+}
+
+int FuncTestPanel::medianOf(const QVector<int>& v) {
+    if (v.isEmpty()) return 0;
+    QVector<int> s = v;
+    std::sort(s.begin(), s.end());
+    return s[s.size() / 2];
+}
+
+void FuncTestPanel::updateLive() {
+    if (!m_live) return;
+    QString s = QString("PWM: %1 | Lux: %2 | BT1: %3 | BT2: %4 | VBAT: %5mV")
+        .arg(m_tele.value("pwm").toString())
+        .arg(m_tele.value("lux_raw").toInt() / 100.0, 0, 'f', 1)
+        .arg(m_tele.value("raw_k_m").toString())
+        .arg(m_tele.value("raw_k_p").toString())
+        .arg(m_tele.value("vbatt").toString());
+    if (m_running || m_phase == PhRestoreMode) {
+        qint64 timeout = phaseTimeoutMs(m_phase);
+        if (timeout > 0) {
+            qint64 rem = timeout - phaseElapsed();
+            if (rem < 0) rem = 0;
+            s += QString(" | ⏳ %1 剩余 %2s").arg(phaseLabel(m_phase)).arg(rem / 1000.0, 0, 'f', 1);
+        }
+    }
+    m_live->setText(s);
+}
+
+qint64 FuncTestPanel::phaseElapsed() const { return m_phaseClock.elapsed() - m_pauseMs; }
+
+qint64 FuncTestPanel::phaseTimeoutMs(Phase p) {
+    switch (p) {
+    case PhPowerOn:     return 30000;
+    case PhLedBase:
+    case PhLedFull:
+    case PhLedEcho:     return kLedStageTimeoutMs;
+    case PhSetAls:      return 9000;
+    case PhAlsDark:
+    case PhAlsBright:   return kAlsTimeoutMs;
+    case PhKeyBT1:
+    case PhKeyBT2:      return kKeyTimeoutMs;
+    case PhKeyBT1Rel:
+    case PhKeyBT2Rel:   return 5000;
+    case PhDm:          return 8000;
+    case PhRestoreMode: return 9000;
+    default:            return 0;
+    }
+}
+
+const char *FuncTestPanel::phaseLabel(Phase p) {
+    switch (p) {
+    case PhPowerOn:     return "等待开机";
+    case PhLedBase:     return "LED 关灯基准";
+    case PhLedFull:     return "LED 全亮采样";
+    case PhLedEcho:     return "LED 回显判定";
+    case PhSetAls:      return "切换 ALS";
+    case PhAlsDark:     return "光感-暗";
+    case PhAlsBright:   return "光感-亮";
+    case PhKeyBT1:      return "按键 BT1";
+    case PhKeyBT1Rel:   return "松开 BT1";
+    case PhKeyBT2:      return "按键 BT2";
+    case PhKeyBT2Rel:   return "松开 BT2";
+    case PhDm:          return "DM 码";
+    case PhRestoreMode: return "恢复模式";
+    default:            return "";
     }
 }
 
@@ -139,7 +218,12 @@ void FuncTestPanel::startTest(uint32_t sn) {
     m_physKeysBlocked = false;
     m_pollFast = false;
     m_alsSwitched = false;
-    m_ledVbatStart = 0;
+    m_ledVbatOff = 0; m_ledVbatOn = 0; m_ledIavgOn = 0; m_ledSafeBrtOn = 0;
+    m_pzOff = -1.0; m_pzOn = -1.0;
+    m_pauseMs = 0; m_paused = false;
+    m_teleSeen = false;
+    m_teleClock.restart();
+    m_vbuf.clear(); m_iabuf.clear(); m_sbbuf.clear();
     m_stepState.fill(0, 6);
     for (int i = 0; i < 6; i++) {
         m_stepTable->item(i, 0)->setForeground(QColor("#333333"));
@@ -184,11 +268,26 @@ void FuncTestPanel::setPhase(Phase p) {
     case PhPowerOn:
         setInstruction("请确保设备已开机（双键长按 1.5s 开机，红灯亮起）。等待设备进入 RUN…");
         break;
-    case PhLed:
+    case PhLedBase:
         setStepState(0, 1);
-        m_ledVbatStart = m_tele.value("vbatt").toInt();
-        setInstruction("LED 测试：正在点亮 LED 并回读 PWM 判断是否正常…");
+        m_ledVbatOff = 0; m_ledVbatOn = 0;
+        m_vbuf.clear();
+        m_pzOff = -1.0;
+        setInstruction("LED 测试(1/3)：正在采集关灯基准电压…");
+        /* OVR 模式1: CC = 2399 - ovr_pwm, ovr_pwm=0 -> LED 灭 */
         sendCmd(Command(CmdType::WRITE_8, OFS_OVR_LED_MODE, 1));
+        sendCmd(Command(CmdType::WRITE_16, OFS_OVR_PWM_VAL, 0));
+        break;
+    case PhLedFull:
+        m_vbuf.clear(); m_iabuf.clear(); m_sbbuf.clear();
+        m_pzOn = -1.0;
+        setInstruction("LED 测试(2/3)：正在全亮采样(压降判定开路/短路)…");
+        /* ovr_pwm=2399 -> CC=0 -> LED 全亮 */
+        sendCmd(Command(CmdType::WRITE_16, OFS_OVR_PWM_VAL, 2399));
+        break;
+    case PhLedEcho:
+        setInstruction("LED 测试(3/3)：正在回读 PWM 判定…");
+        /* ovr_pwm=1200 -> CC=1199 -> 约 50% 占空比, 回显应≈1199 */
         sendCmd(Command(CmdType::WRITE_16, OFS_OVR_PWM_VAL, 1200));
         break;
     case PhSetAls:
@@ -239,6 +338,7 @@ void FuncTestPanel::setPhase(Phase p) {
     default:
         break;
     }
+    updateLive();
 }
 
 void FuncTestPanel::setInstruction(const QString& s) {
@@ -264,35 +364,131 @@ void FuncTestPanel::sendCmd(const Command& c) {
 }
 
 void FuncTestPanel::tick() {
-    if (!m_running && m_phase != PhRestoreMode) return;   /* 恢复模式在 m_running=false 后仍需继续 */
     if (m_phase == PhIdle) return;
-    qint64 elapsed = m_phaseClock.elapsed();
+    if (!m_running && m_phase != PhRestoreMode) return;
+
+    /* 掉线保护: 已收到过遥测但中断 >2.5s -> 暂停倒计时等待重连 */
+    bool fresh = !m_teleSeen || m_teleClock.elapsed() < kTeleStaleMs;
+    if (!fresh) {
+        if (m_phase == PhRestoreMode && !m_running) {
+            completeFinish(m_resultPendingOk, m_resultPendingReason + "（目标掉线，未能恢复原模式）");
+            return;
+        }
+        if (!m_paused) {
+            m_paused = true;
+            m_pauseClock.restart();
+            emit sigLog("[FUNC] 目标掉线/遥测中断，暂停测试等待重连…");
+        }
+        m_live->setText(QString("⏸ 目标掉线，等待重连…（已暂停 %1s）").arg(m_pauseClock.elapsed() / 1000.0, 0, 'f', 1));
+        if (m_pauseClock.elapsed() > kPauseLimitMs) {
+            m_paused = false;
+            finish(false, "目标掉线超过 2 分钟，测试中止。");
+        }
+        return;
+    }
+    if (m_paused) {
+        m_pauseMs += m_pauseClock.elapsed();
+        m_paused = false;
+        emit sigLog("[FUNC] 目标已重连，继续测试…");
+    }
+    qint64 elapsed = phaseElapsed();
 
     switch (m_phase) {
     case PhPowerOn: {
         if (hasState(1) || hasState(4)) {   /* RUN or TEST */
             emit sigLog("[FUNC] 设备已开机 (state=" + m_tele["state"].toString() + ")，解锁测试模式…");
             sendCmd(Command(CmdType::ENTER_TEST));
-            setPhase(PhLed);
+            setPhase(PhLedBase);
         } else if (elapsed > 30000) {
             finish(false, "等待开机超时：请确认设备已开机且探针已连接。");
         }
         break;
     }
-    case PhLed: {
+    case PhLedBase: {
+        int v = m_tele.value("vbatt_raw", 0).toInt();
+        if (v > 0) m_vbuf.append(v);
+        if (elapsed >= 900) {
+            m_ledVbatOff = medianOf(m_vbuf);
+            if (m_pzProvider) {
+                QVariantMap pz = m_pzProvider();
+                if (pz.value("connected").toBool()) m_pzOff = pz.value("ibus_ma").toDouble();
+            }
+            emit sigLog(QString("[FUNC] LED 关灯基准 VBAT=%1mV").arg(m_ledVbatOff));
+            setPhase(PhLedFull);
+        } else if (elapsed > kLedStageTimeoutMs) {
+            finish(false, "LED 关灯基准采样超时。");
+        }
+        break;
+    }
+    case PhLedFull: {
+        int v = m_tele.value("vbatt_raw", 0).toInt();
+        if (v > 0) m_vbuf.append(v);
+        int ia = m_tele.value("i_avg", 0).toInt();
+        if (ia > 0) m_iabuf.append(ia);
+        int sb = m_tele.value("safe_brt", 0).toInt();
+        if (sb > 0) m_sbbuf.append(sb);
+        if (elapsed >= 1100) {
+            m_ledVbatOn = medianOf(m_vbuf);
+            m_ledIavgOn = medianOf(m_iabuf);
+            m_ledSafeBrtOn = medianOf(m_sbbuf);
+            if (m_pzProvider) {
+                QVariantMap pz = m_pzProvider();
+                if (pz.value("connected").toBool()) m_pzOn = pz.value("ibus_ma").toDouble();
+            }
+            int drop = qMax(0, m_ledVbatOff - m_ledVbatOn);
+            emit sigLog(QString("[FUNC] LED 全亮 VBAT=%1mV (压降 %2mV, i_avg=%3uA, safe_brt=%4)")
+                .arg(m_ledVbatOn).arg(drop).arg(m_ledIavgOn).arg(m_ledSafeBrtOn));
+            setPhase(PhLedEcho);
+        } else if (elapsed > kLedStageTimeoutMs) {
+            finish(false, "LED 全亮采样超时。");
+        }
+        break;
+    }
+    case PhLedEcho: {
         if (m_tele.contains("pwm")) {
             int pwm = m_tele["pwm"].toInt();
             if (pwm >= 1200 - 30 && pwm <= 1200 + 30) {
+                int drop = qMax(0, m_ledVbatOff - m_ledVbatOn);
+                QString extra;
+                bool ledOk = true;
+                /* 短路判定: 全亮压降过大 */
+                if (drop >= kLedShortDropMv) {
+                    ledOk = false;
+                    extra = QString("疑似 LED 短路：全亮压降 %1mV 过大（正常 < %2mV）。").arg(drop).arg(kLedShortDropMv);
+                }
+                /* 开路判定: 全亮几乎无压降(无电流消耗) */
+                else if (drop <= kLedOpenDropMv) {
+                    ledOk = false;
+                    extra = QString("疑似 LED 开路：全亮压降 %1mV 过小（正常 > %2mV，直连稳压源供电时请用 PowerZ 复核）。").arg(drop).arg(kLedOpenDropMv);
+                }
+                /* PowerZ 交叉验证(真实电流): 开路无变化 / 短路远超额定 */
+                if (ledOk && m_pzOn >= 0 && m_pzOff >= 0) {
+                    double dI = m_pzOn - m_pzOff;
+                    if (qAbs(dI) < kPzOpenDeltaMa) {
+                        ledOk = false;
+                        extra = QString("疑似 LED 开路：PowerZ 电流变化仅 %1mA。").arg(dI, 0, 'f', 2);
+                    } else if (dI > kPzShortDeltaMa) {
+                        ledOk = false;
+                        extra = QString("疑似 LED 短路：PowerZ 电流变化 %1mA 远超额定。").arg(dI, 0, 'f', 2);
+                    }
+                }
                 sendCmd(Command(CmdType::WRITE_8, OFS_OVR_LED_MODE, 0));
                 m_ledRestored = true;
-                setStepState(0, 2);
-                emit sigLog(QString("[FUNC] LED PASS (PWM 回显=%1, VBAT 跌落=%2mV)")
-                    .arg(pwm).arg(qMax(0, m_ledVbatStart - m_tele.value("vbatt").toInt())));
-                setPhase(PhSetAls);
+                if (ledOk) {
+                    setStepState(0, 2);
+                    QString pzTxt = (m_pzOn >= 0 && m_pzOff >= 0)
+                        ? QString(", PowerZ ΔI=%1mA").arg(m_pzOn - m_pzOff, 0, 'f', 2) : QString();
+                    emit sigLog(QString("[FUNC] LED PASS (PWM 回显=%1, 全亮压降=%2mV, i_avg=%3uA%4)")
+                        .arg(pwm).arg(drop).arg(m_ledIavgOn).arg(pzTxt));
+                    setPhase(PhSetAls);
+                } else {
+                    setStepState(0, 3);
+                    finish(false, extra);
+                }
                 break;
             }
         }
-        if (elapsed > kLedTimeoutMs) {
+        if (elapsed > kLedStageTimeoutMs) {
             sendCmd(Command(CmdType::WRITE_8, OFS_OVR_LED_MODE, 0));
             m_ledRestored = true;
             finish(false, QString("LED 回读失败：设置 PWM=1200 后读到 %1，请检查 LED/驱动。").arg(m_tele.value("pwm").toString()));
@@ -305,9 +501,9 @@ void FuncTestPanel::tick() {
             finish(false, "光感传感器 I2C 故障（sensor_status=2），请检查 OPT3001 焊接/供电。");
             break;
         }
-        if (m_tele.contains("lux_raw") && m_tele["lux_raw"].toInt() < kAlsDarkLux) {
+        if (m_tele.contains("lux_raw") && m_tele["lux_raw"].toInt() / 100 < kAlsDarkLux) {
             setStepState(1, 2);
-            emit sigLog("[FUNC] 光感(暗) PASS (lux=" + m_tele["lux_raw"].toString() + ")");
+            emit sigLog("[FUNC] 光感(暗) PASS (lux=" + QString::number(m_tele["lux_raw"].toInt() / 100.0, 'f', 1) + ")");
             setPhase(PhAlsBright);
             break;
         }
@@ -322,9 +518,9 @@ void FuncTestPanel::tick() {
             finish(false, "光感传感器 I2C 故障（sensor_status=2），请检查 OPT3001 焊接/供电。");
             break;
         }
-        if (m_tele.contains("lux_raw") && m_tele["lux_raw"].toInt() > kAlsBrightLux) {
+        if (m_tele.contains("lux_raw") && m_tele["lux_raw"].toInt() / 100 > kAlsBrightLux) {
             setStepState(2, 2);
-            emit sigLog("[FUNC] 光感(亮) PASS (lux=" + m_tele["lux_raw"].toString() + ")");
+            emit sigLog("[FUNC] 光感(亮) PASS (lux=" + QString::number(m_tele["lux_raw"].toInt() / 100.0, 'f', 1) + ")");
             setPhase(PhKeyBT1);
             break;
         }
@@ -421,6 +617,7 @@ void FuncTestPanel::tick() {
     default:
         break;
     }
+    updateLive();
 }
 
 void FuncTestPanel::finish(bool ok, const QString& reason) {
@@ -459,4 +656,5 @@ void FuncTestPanel::completeFinish(bool ok, const QString& reason) {
         setInstruction("❌ " + reason);
         emit sigLog("[FUNC] 测试失败: " + reason);
     }
+    updateLive();
 }

@@ -778,8 +778,9 @@ void MainWindow::setupUI() {
     vMon->setSpacing(2);
     vMon->setContentsMargins(8, 4, 8, 4);
     QHBoxLayout *lPoll = new QHBoxLayout();
-    chkPoll = new QCheckBox("Enable Background Polling");
+    chkPoll = new QCheckBox("Fast Polling");
     chkPoll->setStyleSheet("color: #0078D7; font-weight: bold;");
+    chkPoll->setToolTip("勾选=快速轮询(150ms); 不勾选=慢速轮询(1s)。\n参数栏/遥测始终刷新, 不受此开关影响。");
     connect(chkPoll, &QCheckBox::toggled, this, &MainWindow::onActiveProbeChanged);
     lPoll->addWidget(chkPoll);
     lPoll->addStretch();
@@ -793,7 +794,7 @@ void MainWindow::setupUI() {
     lPoll->addWidget(spinPollMs);
     vMon->addLayout(lPoll);
 
-    QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "HW P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(Filt)", "Lux(RAW)", "ALS Off", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags", "Params", "Sys Clk", "Boot Refuse", "Stby Cnt"};
+    QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "HW P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(lx)", "LuxRAW(lx)", "ALS Off", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags", "Params", "Sys Clk", "Boot Refuse", "Stby Cnt"};
     QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "p_hw", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "als_off", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags", "cfg_params", "sys_clk", "boot_refuse", "stby_cnt"};
     const int MON_COLS = 10;
     QGridLayout *gridMon = new QGridLayout();
@@ -1184,13 +1185,18 @@ void MainWindow::setupUI() {
     });
     funcTest->setUuidGetter([this](uint32_t sn){ return probeUuids.value(sn); });
     funcTest->setActiveSnProvider([this](){ return cmbActiveProbe->currentData().toUInt(); });
+    funcTest->setPowerZProvider([this](){
+        QVariantMap pz;
+        if (pzWorker) { pz["connected"] = pzWorker->isConnected(); pz["ibus_ma"] = pzWorker->ibus() * 1000.0; }
+        return pz;
+    });
     funcTest->setPollingController([this](uint32_t sn, bool fast){
         BaseWorker *w = activeWorkers.value(sn, nullptr);
         if (!w) return;
         if (fast) { w->enablePolling = true; w->pollIntervalMs = 80; }
         else {
-            w->enablePolling = (sn == cmbActiveProbe->currentData().toUInt() && chkPoll && chkPoll->isChecked());
-            w->pollIntervalMs = spinPollMs ? spinPollMs->value() : 150;
+            w->enablePolling = (sn == cmbActiveProbe->currentData().toUInt());
+            w->pollIntervalMs = (chkPoll && chkPoll->isChecked()) ? (spinPollMs ? spinPollMs->value() : 150) : 1000;
         }
     });
     connect(funcTest, &FuncTestPanel::sigLog, this, [this](const QString& s){ onLog(0, s); });
@@ -1624,8 +1630,10 @@ void MainWindow::enqueueToActive(const Command& cmd) {
 
 void MainWindow::onActiveProbeChanged() {
     uint32_t activeSn = cmbActiveProbe->currentData().toUInt();
+    /* 参数栏常刷新: 活动探针始终轮询(不勾选=1s 慢速, 勾选=快速) */
     for (auto w : activeWorkers) {
-        w->enablePolling = (w->probeSN == activeSn && chkPoll->isChecked());
+        w->enablePolling = (w->probeSN == activeSn);
+        if (w->probeSN == activeSn) w->pollIntervalMs = chkPoll->isChecked() ? (spinPollMs ? spinPollMs->value() : 150) : 1000;
     }
     /* 连接/切换探针时清空上次会话残留的调试覆盖(虚拟键/亮度注入/物理键拦截),
        防止残留 ovr 位在固件侧被当作持续按住, 误触发 5s 双键模式切换 */
@@ -1969,8 +1977,9 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
 
     monVars["sensor"]->setText(sen < 3 ? sns[sen] : "Unk");
     monVars["err_cnt"]->setText(data["err_cnt"].toString());
-    monVars["lux"]->setText(data["lux"].toString());
-    monVars["lux_raw"]->setText(data["lux_raw"].toString());
+    /* OPT3001 分辨率 0.01 lux/bit: 真实 lux = 读值/100 */
+    monVars["lux"]->setText(QString::number(data["lux"].toInt() / 100.0, 'f', 2));
+    monVars["lux_raw"]->setText(QString::number(data["lux_raw"].toInt() / 100.0, 'f', 2));
     monVars["als_off"]->setText(QString::number((data["cfg_params"].toUInt() >> 16) & 0xFF));
 
     /* 键状态合并显示到操作按钮: 注入按住=红底 PRESSED+秒数, 注入未按住=OVR, 物理按下=琥珀底 PHY, 均无=默认
