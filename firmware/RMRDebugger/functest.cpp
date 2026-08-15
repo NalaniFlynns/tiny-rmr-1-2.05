@@ -128,7 +128,11 @@ void FuncTestPanel::updateTelemetry(uint32_t sn, const QVariantMap& data) {
 
 void FuncTestPanel::startTest(uint32_t sn) {
     if (m_running) return;
-    if (sn == 0xFFFFFFFF) return;
+    if (sn == 0 || sn == 0xFFFFFFFF) {
+        setInstruction("请先在“1. Multi-Channel Programming”页连接探针，并在顶部选择活动探针后再开始测试。");
+        emit sigLog("[FUNC] 未选择活动探针, 测试未启动");
+        return;
+    }
     m_sn = sn;
     m_running = true;
     m_ledRestored = false;
