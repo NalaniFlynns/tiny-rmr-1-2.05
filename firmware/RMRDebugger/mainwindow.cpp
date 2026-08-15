@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "datamatrix.h"
 #include <QApplication>
+#include <QCoreApplication>
 #include <windows.h>
     int prmMax[] = {9999, 999999, 5000, 100000, 99999999, 1000, 5000, 5000, 8, 20, 20, 20};
 #include <QVBoxLayout>
@@ -601,14 +602,11 @@ void MainWindow::setupUI() {
     hl->addWidget(txtUuid);
 
     btnDxf = new QPushButton("显示DM码");
-    btnDxf->setToolTip("点击显示/隐藏当前设备 UUID 的小 DM 码");
-    connect(btnDxf, &QPushButton::clicked, this, &MainWindow::showDmCode);
+    btnDxf->setToolTip("当前设备 UUID 的小 DM 码；点击放大显示");
+    btnDxf->setIconSize(QSize(26, 26));
+    btnDxf->setStyleSheet("padding: 2px 8px;");
+    connect(btnDxf, &QPushButton::clicked, this, &MainWindow::showDmDialog);
     hl->addWidget(btnDxf);
-    dmPreview = new QLabel();
-    dmPreview->setFixedSize(96, 96);
-    dmPreview->setStyleSheet("border: 1px solid #AAA; background: white;");
-    dmPreview->hide();
-    hl->addWidget(dmPreview);
 
     lblVer = new QLabel("FW: N/A");
     lblVer->setStyleSheet("font-weight: bold; border: none; padding-left: 5px;");
@@ -1185,6 +1183,14 @@ void MainWindow::setupUI() {
     });
     funcTest->setUuidGetter([this](uint32_t sn){ return probeUuids.value(sn); });
     funcTest->setActiveSnProvider([this](){ return cmbActiveProbe->currentData().toUInt(); });
+    funcTest->setRecordSaver([this](const QVariantMap& rec){ upsertTestRecord(rec); });
+    funcTest->setRecordFetcher([this](const QString& uuid){ return fetchTestRecord(uuid); });
+    funcTest->setFlashInfoProvider([this](){
+        QVariantMap m;
+        m["flash_time"] = m_lastFlashTime;
+        m["flash_fw"] = m_lastFlashFw;
+        return m;
+    });
     funcTest->setPowerZProvider([this](){
         QVariantMap pz;
         if (pzWorker) { pz["connected"] = pzWorker->isConnected(); pz["ibus_ma"] = pzWorker->ibus() * 1000.0; }
@@ -1463,7 +1469,14 @@ void MainWindow::addProbeToUI(uint32_t sn, ProbeType type, bool useXdsAdapter) {
     connect(w, &BaseWorker::sigFwVer, this, &MainWindow::onFwVer);
     connect(w, &BaseWorker::sigTelemetry, this, &MainWindow::onTelemetry);
     connect(w, &BaseWorker::sigProgress, this, &MainWindow::onProgress);
-    connect(w, &BaseWorker::sigLog, this, &MainWindow::onLog);
+    connect(w, &BaseWorker::sigLog, this, [this](uint32_t sn, const QString& text){
+        onLog(sn, text);
+        if (text.contains("Programming + Verify OK", Qt::CaseInsensitive) || text.contains("Flash OK", Qt::CaseInsensitive)) {
+            m_lastFlashTime = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+            m_lastFlashFw = txtHexVer ? txtHexVer->text() : QString();
+            if (m_lastFlashFw.isEmpty() || m_lastFlashFw == "Not Found") m_lastFlashFw = QString();
+        }
+    });
     connect(w, &BaseWorker::sigMsg, this, &MainWindow::onMsg);
     connect(w, &BaseWorker::sigAutoTestRes, this, &MainWindow::onAutoTestRes);
     connect(w, &BaseWorker::sigConfigRead, this, &MainWindow::onConfigRead);
@@ -1525,10 +1538,16 @@ void MainWindow::addProbeToUI(uint32_t sn, ProbeType type, bool useXdsAdapter) {
 
 void MainWindow::initDatabase() {
     db = QSqlDatabase::addDatabase("QSQLITE");
-    db.setDatabaseName("flash_history.db");
+    /* 固定到 exe 同目录, 避免随启动目录变化 */
+    db.setDatabaseName(QCoreApplication::applicationDirPath() + "/flash_history.db");
     if (db.open()) {
         QSqlQuery query;
         query.exec("CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT, status TEXT, ts DATETIME DEFAULT CURRENT_TIMESTAMP)");
+        /* 芯片测试记录: 每个芯片一行, 重复测试覆盖更新(测试次数累加) */
+        query.exec("CREATE TABLE IF NOT EXISTS test_records ("
+                   "chip_uuid TEXT PRIMARY KEY, probe_sn TEXT, pass INTEGER, pass_time TEXT, "
+                   "calib_json TEXT, fw_version TEXT, flash_time TEXT, "
+                   "test_count INTEGER DEFAULT 1, updated_at TEXT)");
     }
 }
 
@@ -1541,6 +1560,43 @@ void MainWindow::saveLogToDb(const QString& uuid, bool success) {
     query.exec();
     sessionCounter++;
     addLogItem(sessionCounter, uuid, success);
+}
+
+void MainWindow::upsertTestRecord(const QVariantMap& rec) {
+    if (rec.value("chip_uuid").toString().length() < 10) return;
+    QSqlQuery query;
+    query.prepare("INSERT INTO test_records (chip_uuid, probe_sn, pass, pass_time, calib_json, fw_version, flash_time, test_count, updated_at) "
+                  "VALUES (?,?,?,?,?,?,?,1,?) "
+                  "ON CONFLICT(chip_uuid) DO UPDATE SET probe_sn=excluded.probe_sn, pass=excluded.pass, "
+                  "pass_time=excluded.pass_time, calib_json=excluded.calib_json, fw_version=excluded.fw_version, "
+                  "flash_time=excluded.flash_time, test_count=test_count+1, updated_at=excluded.updated_at");
+    query.addBindValue(rec.value("chip_uuid").toString());
+    query.addBindValue(rec.value("probe_sn").toString());
+    query.addBindValue(rec.value("pass").toBool() ? 1 : 0);
+    query.addBindValue(rec.value("pass_time").toString());
+    query.addBindValue(rec.value("calib_json").toString());
+    query.addBindValue(rec.value("fw_version").toString());
+    query.addBindValue(rec.value("flash_time").toString());
+    query.addBindValue(QDateTime::currentDateTime().toString(Qt::ISODate));
+    query.exec();
+}
+
+QVariantMap MainWindow::fetchTestRecord(const QString& uuid) {
+    QVariantMap rec;
+    if (uuid.length() < 10) return rec;
+    QSqlQuery query;
+    query.prepare("SELECT probe_sn, pass, pass_time, calib_json, fw_version, flash_time, test_count FROM test_records WHERE chip_uuid=?");
+    query.addBindValue(uuid);
+    if (query.exec() && query.next()) {
+        rec["probe_sn"] = query.value(0).toString();
+        rec["pass"] = query.value(1).toInt() != 0;
+        rec["pass_time"] = query.value(2).toString();
+        rec["calib_json"] = query.value(3).toString();
+        rec["fw_version"] = query.value(4).toString();
+        rec["flash_time"] = query.value(5).toString();
+        rec["test_count"] = query.value(6).toInt();
+    }
+    return rec;
 }
 
 void MainWindow::addLogItem(int id, const QString& uuid, bool success) {
@@ -1644,6 +1700,8 @@ void MainWindow::onActiveProbeChanged() {
     enqueueToActive(Command(CmdType::WRITE_8, OFS_OVR_LED_MODE, 0));
     for (auto le : monVars.values()) le->setText("-");
     seriesVBatt->clear(); seriesLux->clear(); seriesPwm->clear(); seriesBrt->clear(); plotClock.restart();
+    if (funcTest) funcTest->refreshHistory();
+    updateDmButton();
 
     if (activeWorkers.contains(activeSn)) {
         lblVer->setText("FW: " + probeFwVers.value(activeSn, "N/A"));
@@ -1722,19 +1780,43 @@ void MainWindow::updateLed() {
     }
 }
 
-void MainWindow::showDmCode() {
-    /* 点击在按钮旁显示/隐藏一个小的 DM 码 */
-    if (dmPreview && dmPreview->isVisible()) { dmPreview->hide(); return; }
+void MainWindow::updateDmButton() {
+    /* 把当前设备 UUID 的小 DM 码直接画在按钮上 */
+    if (!btnDxf) return;
+    uint32_t sn = cmbActiveProbe->currentData().toUInt();
+    QString uuid = probeUuids.value(sn);
+    if (uuid.isEmpty()) { btnDxf->setIcon(QIcon()); return; }
+    QImage img = DataMatrix::renderImage(uuid, 4, 2);
+    if (img.isNull()) { btnDxf->setIcon(QIcon()); return; }
+    btnDxf->setIcon(QIcon(QPixmap::fromImage(img).scaled(26, 26, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+}
+
+void MainWindow::showDmDialog() {
+    /* 点击按钮: 放大 DM 码弹窗 */
     uint32_t sn = cmbActiveProbe->currentData().toUInt();
     QString uuid = probeUuids.value(sn);
     if (uuid.isEmpty()) { showModalMsg("Error", "请先连接探针并读取 UUID。", true); return; }
-    QImage img = DataMatrix::renderImage(uuid, 4, 2);
+    QImage img = DataMatrix::renderImage(uuid, 8, 4);
     if (img.isNull()) { showModalMsg("Error", "DM 码生成失败。", true); return; }
-    if (dmPreview) {
-        dmPreview->setPixmap(QPixmap::fromImage(img).scaled(92, 92, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        dmPreview->setToolTip(uuid);
-        dmPreview->show();
-    }
+    QDialog dlg(this);
+    dlg.setWindowTitle("设备 DM 码");
+    dlg.setModal(true);
+    QVBoxLayout *v = new QVBoxLayout(&dlg);
+    QLabel *imgLabel = new QLabel(&dlg);
+    imgLabel->setPixmap(QPixmap::fromImage(img).scaled(320, 320, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    imgLabel->setAlignment(Qt::AlignCenter);
+    imgLabel->setStyleSheet("border: 1px solid #AAA; background: white; padding: 4px;");
+    QLabel *uuidLabel = new QLabel(uuid, &dlg);
+    uuidLabel->setAlignment(Qt::AlignCenter);
+    uuidLabel->setStyleSheet("font-family: Consolas; color: #333; font-size: 10pt;");
+    QPushButton *ok = new QPushButton("关闭", &dlg);
+    ok->setObjectName("BtnGreen");
+    ok->setFixedWidth(120);
+    connect(ok, &QPushButton::clicked, &dlg, &QDialog::accept);
+    v->addWidget(imgLabel);
+    v->addWidget(uuidLabel);
+    v->addWidget(ok, 0, Qt::AlignCenter);
+    dlg.exec();
 }
 
 void MainWindow::onStatus(uint32_t sn, int code, const QString& msg) {
@@ -1765,6 +1847,7 @@ void MainWindow::onStatus(uint32_t sn, int code, const QString& msg) {
 void MainWindow::onUuid(uint32_t sn, const QString& uuid) {
     probeUuids[sn] = uuid;
     lastUuid[sn] = uuid;
+    if (sn == cmbActiveProbe->currentData().toUInt()) updateDmButton();
     QJsonObject u1; u1["type"]="uuid"; u1["sn"]=QString::number(sn); u1["uuid"]=uuid; ipcBroadcast(u1);
     int row = probeRowMap.value(sn, -1);
     if (row >= 0) {

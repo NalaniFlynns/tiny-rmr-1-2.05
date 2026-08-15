@@ -9,12 +9,13 @@
 #include "DebugWorkers.h"
 
 class QLabel;
+class QGroupBox;
 class QPushButton;
 class QTableWidget;
 class QTimer;
 
-/* 功能测试插件: 引导式自动判定 (LED / 光感 / 按键 / DM码)
- * 通过后显示绿色 PASS, 任一失败显示红色 FAIL 并给出原因。 */
+/* 功能测试插件: LED / 光感 / 按键 自动判定, 通过后生成 DM 码最终产物,
+ * 测试记录写入本地数据库(芯片 UUID 维度, 重复测试更新), 显示绿色 PASS。 */
 class FuncTestPanel : public QWidget {
     Q_OBJECT
 public:
@@ -25,10 +26,14 @@ public:
     void setActiveSnProvider(std::function<uint32_t()> provider);
     void setPollingController(std::function<void(uint32_t sn, bool fast)> ctrl);
     void setPowerZProvider(std::function<QVariantMap()> provider);
+    void setRecordSaver(std::function<void(const QVariantMap&)> saver);
+    void setRecordFetcher(std::function<QVariantMap(const QString&)> fetcher);
+    void setFlashInfoProvider(std::function<QVariantMap()> provider);
 
     void updateTelemetry(uint32_t sn, const QVariantMap& data);
     void startTest(uint32_t sn);
     void stopTest();
+    void refreshHistory();
 
 signals:
     void sigLog(const QString& text);
@@ -36,7 +41,7 @@ signals:
 private:
     enum Phase {
         PhIdle, PhPowerOn, PhLedBase, PhLedFull, PhLedEcho, PhSetAls, PhAlsDark, PhAlsBright,
-        PhKeyBT1, PhKeyBT1Rel, PhKeyBT2, PhKeyBT2Rel, PhDm, PhRestoreMode, PhDone
+        PhKeyBT1, PhKeyBT1Rel, PhKeyBT2, PhKeyBT2Rel, PhRestoreMode, PhDone
     };
     void tick();
     void setPhase(Phase p);
@@ -49,6 +54,7 @@ private:
     void finish(bool ok, const QString& reason);
     void completeFinish(bool ok, const QString& reason);
     void sendCmd(const Command& c);
+    void saveRecord(bool ok, const QString& reason);
     bool hasState(int state) const;
     static int medianOf(const QVector<int>& v);
 
@@ -83,6 +89,8 @@ private:
     QLabel *m_result = nullptr;
     QLabel *m_live = nullptr;
     QLabel *m_dmImage = nullptr;
+    QGroupBox *m_histGroup = nullptr;
+    QTableWidget *m_histTable = nullptr;
     QPushButton *m_btnStart = nullptr;
     QPushButton *m_btnStop = nullptr;
     QTableWidget *m_stepTable = nullptr;
@@ -93,4 +101,7 @@ private:
     std::function<uint32_t()> m_getActiveSn;
     std::function<void(uint32_t, bool)> m_pollCtrl;
     std::function<QVariantMap()> m_pzProvider;
+    std::function<void(const QVariantMap&)> m_saveRecord;
+    std::function<QVariantMap(const QString&)> m_fetchRecord;
+    std::function<QVariantMap()> m_flashInfo;
 };

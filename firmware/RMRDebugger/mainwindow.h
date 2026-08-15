@@ -77,13 +77,16 @@ private slots:
     void updateAls();
     void updateLed();
     void onLedModeChanged();
-    void showDmCode();
+    void showDmDialog();
+    void updateDmButton();
 
 private:
     void setupUI();
     void initDatabase();
     void addLogItem(int id, const QString& uuid, bool success);
     void saveLogToDb(const QString& uuid, bool success);
+    void upsertTestRecord(const QVariantMap& rec);
+    QVariantMap fetchTestRecord(const QString& uuid);
     QString parseHexVersion(const QString& path);
 
     void addProbeToUI(uint32_t sn, ProbeType type, bool useXdsAdapter = false);
@@ -103,6 +106,8 @@ private:
 
     QSqlDatabase db;
     int sessionCounter = 0;
+    QString m_lastFlashTime;
+    QString m_lastFlashFw;
 
     QMap<uint32_t, BaseWorker*> activeWorkers;
     QMap<uint32_t, int> probeRowMap;
@@ -128,7 +133,6 @@ private:
     QComboBox *cmbSpeed;
     QLineEdit *txtUuid;
     QPushButton *btnDxf;
-    QLabel *dmPreview = nullptr;
     QLabel *lblVer;
 
     QLineEdit *txtFwPath;

@@ -271,6 +271,18 @@ void BaseWorker::pollTelemetryGeneric() {
     map["ovr_lux"] = *(uint32_t*)(data + OFS_OVR_ALS_LUX);
     map["cfg_params"] = *(uint32_t*)(data + OFS_CFG_PARAMS);
     map["cfg_features"] = *(uint32_t*)(data + OFS_CFG_FEATURES);
+    /* 校准参数镜像 (0x74-0x9E) */
+    map["cfg_r_base"] = *(uint32_t*)(data + OFS_CFG_R_BASE);
+    map["cfg_r_series"] = *(uint32_t*)(data + OFS_CFG_R_SERIES);
+    map["cfg_v_led_fw"] = *(uint32_t*)(data + OFS_CFG_V_LED_FW);
+    map["cfg_i_max_ua"] = *(uint32_t*)(data + OFS_CFG_I_MAX_UA);
+    map["cfg_batt_p_uw"] = *(uint32_t*)(data + OFS_CFG_BATT_P_UW);
+    map["cfg_als_min_brt"] = *(uint32_t*)(data + OFS_CFG_ALS_MIN_BRT);
+    map["cfg_lvp_crit"] = *(uint32_t*)(data + OFS_CFG_LVP_CRIT);
+    map["cfg_lvp_ext"] = *(uint32_t*)(data + OFS_CFG_LVP_EXT);
+    map["cfg_als_sqrt"] = data[OFS_CFG_ALS_SQRT];
+    map["cfg_als_cap_low"] = data[OFS_CFG_ALS_CAP_LOW];
+    map["cfg_als_cap_high"] = data[OFS_CFG_ALS_CAP_HIGH];
     map["fw_ver"] = QString::fromUtf8((const char*)(data + OFS_FW_VER_STR)).trimmed();
     map["sys_clk"] = *(uint32_t*)(data + OFS_SYS_CLK_KHZ);
     map["boot_refuse"] = *(uint32_t*)(data + OFS_BOOT_REFUSE);

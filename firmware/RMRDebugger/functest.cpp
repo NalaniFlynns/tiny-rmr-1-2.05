@@ -7,21 +7,27 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QLabel>
+#include <QGroupBox>
 #include <QPushButton>
 #include <QTimer>
 #include <QPixmap>
 #include <QDateTime>
 #include <QFont>
+#include <QJsonObject>
+#include <QJsonDocument>
 #include <algorithm>
 
 /* ============================================================================
  * 功能测试插件 (FuncTestPanel)
  * 步骤: 开机 -> LED(关灯基准/全亮压降/PWM回显 -> 开路短路判定) -> 光感暗 -> 光感亮
- *       -> BT1 -> BT2 -> DM码 -> PASS/FAIL
- * 自动判定, 操作员仅需按提示遮挡光感 / 按按键。全部通过显示绿色 PASS。
+ *       -> BT1 -> BT2 -> PASS/FAIL
+ * 自动判定, 操作员仅需按提示遮挡光感 / 按按键。
  * - LED 开路/短路: 全亮时 VBAT 压降(开路≈0mV/正常 20-130mV/短路>250mV),
  *   接入 PowerZ 时用真实电流变化交叉验证(开路无变化/短路远大于额定)。
  * - 掉线保护: 遥测中断>2.5s 自动暂停倒计时等待重连, 恢复后继续。
+ * - DM 码是最终产物(非测试项): 测试通过后生成并展示。
+ * - 测试记录入库: 芯片 UUID + 烧录器 SN + 过测状态/时间 + 校准参数 + 固件版本 + 烧录时间,
+ *   重复测试自动更新同一记录(测试次数累加), 下方子窗口显示当前芯片历史记录。
  * ========================================================================== */
 
 namespace {
@@ -31,7 +37,6 @@ const QStringList kStepNames = {
     "光感 - 见光(亮)",
     "按键 BT1(+)",
     "按键 BT2(-)",
-    "DM 码显示",
 };
 /* 光感阈值: OPT3001 分辨率为 0.01 lux/bit, 固件 lux_raw 即 0.01 lux, 真实 lux = lux_raw/100 */
 constexpr int kAlsDarkLux   = 10;      /* 真实 lux: 遮挡后须 < 10 lux */
@@ -53,7 +58,7 @@ constexpr qint64 kPauseLimitMs  = 120000;
 FuncTestPanel::FuncTestPanel(QWidget *parent) : QWidget(parent) {
     QVBoxLayout *v = new QVBoxLayout(this);
 
-    QLabel *title = new QLabel("功能测试插件 (自动判定)");
+    QLabel *title = new QLabel("功能测试插件");
     title->setStyleSheet("font-size: 13pt; font-weight: bold; color: #004085; border: none;");
     v->addWidget(title);
 
@@ -79,15 +84,16 @@ FuncTestPanel::FuncTestPanel(QWidget *parent) : QWidget(parent) {
     m_instr->setMinimumHeight(64);
     v->addWidget(m_instr);
 
-    m_stepTable = new QTableWidget(6, 2);
+    m_stepTable = new QTableWidget(5, 2);
     m_stepTable->setHorizontalHeaderLabels({"测试项", "结果"});
     m_stepTable->verticalHeader()->setVisible(false);
     m_stepTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_stepTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_stepTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_stepTable->setSelectionMode(QAbstractItemView::NoSelection);
-    m_stepState.fill(0, 6);
-    for (int i = 0; i < 6; i++) {
+    m_stepTable->setMaximumHeight(150);
+    m_stepState.fill(0, 5);
+    for (int i = 0; i < 5; i++) {
         QTableWidgetItem *nameItem = new QTableWidgetItem(kStepNames[i]);
         QTableWidgetItem *stItem = new QTableWidgetItem("待测");
         stItem->setTextAlignment(Qt::AlignCenter);
@@ -95,6 +101,32 @@ FuncTestPanel::FuncTestPanel(QWidget *parent) : QWidget(parent) {
         m_stepTable->setItem(i, 1, stItem);
     }
     v->addWidget(m_stepTable);
+
+    /* 当前芯片历史测试记录子窗口 (数据库 test_records) */
+    m_histGroup = new QGroupBox("当前芯片测试记录");
+    m_histGroup->setStyleSheet("QGroupBox { font-weight: bold; color: #004085; border: 1px solid #B8D4E3; border-radius: 4px; margin-top: 8px; } QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }");
+    QVBoxLayout *histLay = new QVBoxLayout(m_histGroup);
+    histLay->setContentsMargins(6, 10, 6, 6);
+    m_histTable = new QTableWidget(8, 2);
+    m_histTable->setHorizontalHeaderLabels({"字段", "记录"});
+    m_histTable->verticalHeader()->setVisible(false);
+    m_histTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_histTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_histTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_histTable->setSelectionMode(QAbstractItemView::NoSelection);
+    m_histTable->setMaximumHeight(190);
+    const char *histRows[] = {"芯片 UUID", "测试次数", "最近结果", "过测时间", "烧录器 SN", "烧录固件版本", "烧录时间", "校准参数"};
+    for (int i = 0; i < 8; i++) {
+        QTableWidgetItem *k = new QTableWidgetItem(histRows[i]);
+        k->setForeground(QColor("#666666"));
+        k->setFont(QFont("Segoe UI", 9, QFont::Bold));
+        QTableWidgetItem *val = new QTableWidgetItem("-");
+        m_histTable->setItem(i, 0, k);
+        m_histTable->setItem(i, 1, val);
+    }
+    m_histTable->item(7, 1)->setFont(QFont("Consolas", 8));
+    histLay->addWidget(m_histTable);
+    v->addWidget(m_histGroup);
 
     QHBoxLayout *hLive = new QHBoxLayout();
     m_live = new QLabel("PWM: - | Lux: - | BT1: - | BT2: - | VBAT: -");
@@ -108,7 +140,7 @@ FuncTestPanel::FuncTestPanel(QWidget *parent) : QWidget(parent) {
     m_dmImage->setAlignment(Qt::AlignCenter);
     m_dmImage->setStyleSheet("border: 1px solid #CCC; background: white;");
     m_dmImage->setFixedSize(240, 240);
-    m_dmImage->setText("DM 码将在此显示");
+    m_dmImage->setText("最终 DM 码将在此显示");
     m_dmImage->hide();
     v->addWidget(m_dmImage, 0, Qt::AlignCenter);
     v->addStretch();
@@ -129,6 +161,9 @@ void FuncTestPanel::setUuidGetter(std::function<QString(uint32_t)> getter) { m_g
 void FuncTestPanel::setActiveSnProvider(std::function<uint32_t()> provider) { m_getActiveSn = std::move(provider); }
 void FuncTestPanel::setPollingController(std::function<void(uint32_t, bool)> ctrl) { m_pollCtrl = std::move(ctrl); }
 void FuncTestPanel::setPowerZProvider(std::function<QVariantMap()> provider) { m_pzProvider = std::move(provider); }
+void FuncTestPanel::setRecordSaver(std::function<void(const QVariantMap&)> saver) { m_saveRecord = std::move(saver); }
+void FuncTestPanel::setRecordFetcher(std::function<QVariantMap(const QString&)> fetcher) { m_fetchRecord = std::move(fetcher); }
+void FuncTestPanel::setFlashInfoProvider(std::function<QVariantMap()> provider) { m_flashInfo = std::move(provider); }
 
 void FuncTestPanel::updateTelemetry(uint32_t sn, const QVariantMap& data) {
     if (sn == m_sn) {
@@ -159,7 +194,7 @@ void FuncTestPanel::updateLive() {
         if (timeout > 0) {
             qint64 rem = timeout - phaseElapsed();
             if (rem < 0) rem = 0;
-            s += QString(" | ⏳ %1 剩余 %2s").arg(phaseLabel(m_phase)).arg(rem / 1000.0, 0, 'f', 1);
+            s += QString(" | %1 剩余 %2s").arg(phaseLabel(m_phase)).arg(rem / 1000.0, 0, 'f', 1);
         }
     }
     m_live->setText(s);
@@ -180,7 +215,6 @@ qint64 FuncTestPanel::phaseTimeoutMs(Phase p) {
     case PhKeyBT2:      return kKeyTimeoutMs;
     case PhKeyBT1Rel:
     case PhKeyBT2Rel:   return 5000;
-    case PhDm:          return 8000;
     case PhRestoreMode: return 9000;
     default:            return 0;
     }
@@ -199,7 +233,6 @@ const char *FuncTestPanel::phaseLabel(Phase p) {
     case PhKeyBT1Rel:   return "松开 BT1";
     case PhKeyBT2:      return "按键 BT2";
     case PhKeyBT2Rel:   return "松开 BT2";
-    case PhDm:          return "DM 码";
     case PhRestoreMode: return "恢复模式";
     default:            return "";
     }
@@ -224,8 +257,8 @@ void FuncTestPanel::startTest(uint32_t sn) {
     m_teleSeen = false;
     m_teleClock.restart();
     m_vbuf.clear(); m_iabuf.clear(); m_sbbuf.clear();
-    m_stepState.fill(0, 6);
-    for (int i = 0; i < 6; i++) {
+    m_stepState.fill(0, 5);
+    for (int i = 0; i < 5; i++) {
         m_stepTable->item(i, 0)->setForeground(QColor("#333333"));
         m_stepTable->item(i, 1)->setText("待测");
         m_stepTable->item(i, 1)->setForeground(QColor("#6C757D"));
@@ -239,6 +272,7 @@ void FuncTestPanel::startTest(uint32_t sn) {
     m_pollFast = true;
     setPhase(PhPowerOn);
     emit sigLog("[FUNC] 功能测试开始 (SN: " + QString::number(sn) + ")");
+    refreshHistory();
     m_timer->start();
 }
 
@@ -324,14 +358,13 @@ void FuncTestPanel::setPhase(Phase p) {
     case PhKeyBT2Rel:
         setInstruction("按键测试(2/2)：请【松开】 BT2（-）键…");
         break;
-    case PhDm:
-        setStepState(5, 1);
-        setInstruction("DM 码：正在生成设备 DM 码…");
-        break;
     case PhRestoreMode:
-        setInstruction("测试结束：正在恢复原工作模式…");
-        sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
-        sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
+        setInstruction("测试结束：正在收尾…");
+        /* 仅当测试过程中切过 ALS 才需要按双键恢复原模式 */
+        if (m_alsSwitched) {
+            sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 1));
+            sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 1));
+        }
         break;
     case PhDone:
     case PhIdle:
@@ -346,7 +379,7 @@ void FuncTestPanel::setInstruction(const QString& s) {
 }
 
 void FuncTestPanel::setStepState(int idx, int state) {
-    if (idx < 0 || idx >= 6) return;
+    if (idx < 0 || idx >= 5) return;
     m_stepState[idx] = state;
     QTableWidgetItem *item = m_stepTable->item(idx, 1);
     switch (state) {
@@ -361,6 +394,61 @@ void FuncTestPanel::setStepState(int idx, int state) {
 
 void FuncTestPanel::sendCmd(const Command& c) {
     if (m_sendCmd) m_sendCmd(c);
+}
+
+void FuncTestPanel::refreshHistory() {
+    if (!m_histTable) return;
+    uint32_t sn = m_getActiveSn ? m_getActiveSn() : m_sn;
+    QString uuid = m_getUuid ? m_getUuid(sn) : QString();
+    QVariantMap rec;
+    if (m_fetchRecord && uuid.length() >= 10) rec = m_fetchRecord(uuid);
+    auto setVal = [this](int row, const QString& v){
+        if (m_histTable->item(row, 1)) m_histTable->item(row, 1)->setText(v);
+    };
+    setVal(0, uuid.isEmpty() ? "未连接/无 UUID" : uuid);
+    setVal(1, rec.isEmpty() ? "-" : QString::number(rec.value("test_count").toInt()));
+    setVal(2, rec.isEmpty() ? "无记录" : (rec.value("pass").toBool() ? "PASS" : "FAIL"));
+    setVal(3, rec.value("pass_time").toString().isEmpty() ? "-" : rec.value("pass_time").toString());
+    setVal(4, rec.value("probe_sn").toString().isEmpty() ? "-" : rec.value("probe_sn").toString());
+    setVal(5, rec.value("fw_version").toString().isEmpty() ? "-" : rec.value("fw_version").toString());
+    setVal(6, rec.value("flash_time").toString().isEmpty() ? "-" : rec.value("flash_time").toString());
+    setVal(7, rec.value("calib_json").toString().isEmpty() ? "-" : rec.value("calib_json").toString());
+    if (!rec.isEmpty() && m_histTable->item(2, 1)) {
+        m_histTable->item(2, 1)->setForeground(rec.value("pass").toBool() ? QColor("#198754") : QColor("#DC3545"));
+        m_histTable->item(2, 1)->setFont(QFont("Segoe UI", 9, QFont::Bold));
+    }
+}
+
+void FuncTestPanel::saveRecord(bool ok, const QString& reason) {
+    if (!m_saveRecord) return;
+    QString uuid = m_getUuid ? m_getUuid(m_sn) : QString();
+    if (uuid.length() < 10) return;
+    QVariantMap rec;
+    rec["chip_uuid"] = uuid;
+    rec["probe_sn"] = QString::number(m_sn);
+    rec["pass"] = ok;
+    rec["pass_time"] = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+    QJsonObject cal;
+    auto put = [&](const char *k, const char *jk){ if (m_tele.contains(k)) cal[jk] = m_tele.value(k).toInt(); };
+    put("cfg_params", "params");
+    put("cfg_features", "features");
+    put("cfg_r_base", "r_base_mohm");
+    put("cfg_r_series", "r_series_mohm");
+    put("cfg_v_led_fw", "v_led_fw_mv");
+    put("cfg_i_max_ua", "i_max_ua");
+    put("cfg_batt_p_uw", "batt_p_uw");
+    put("cfg_als_min_brt", "als_min_brt");
+    put("cfg_lvp_crit", "lvp_crit_mv");
+    put("cfg_lvp_ext", "lvp_ext_mv");
+    put("cfg_als_sqrt", "als_sqrt_factor");
+    put("cfg_als_cap_low", "als_cap_low");
+    put("cfg_als_cap_high", "als_cap_high");
+    cal["level"] = m_tele.value("level").toInt();
+    rec["calib_json"] = QString::fromUtf8(QJsonDocument(cal).toJson(QJsonDocument::Compact));
+    rec["fw_version"] = m_tele.value("fw_ver").toString();
+    QString ft = m_flashInfo ? m_flashInfo().value("flash_time").toString() : QString();
+    rec["flash_time"] = ft;
+    m_saveRecord(rec);
 }
 
 void FuncTestPanel::tick() {
@@ -379,7 +467,7 @@ void FuncTestPanel::tick() {
             m_pauseClock.restart();
             emit sigLog("[FUNC] 目标掉线/遥测中断，暂停测试等待重连…");
         }
-        m_live->setText(QString("⏸ 目标掉线，等待重连…（已暂停 %1s）").arg(m_pauseClock.elapsed() / 1000.0, 0, 'f', 1));
+        m_live->setText(QString("目标掉线，等待重连…（已暂停 %1s）").arg(m_pauseClock.elapsed() / 1000.0, 0, 'f', 1));
         if (m_pauseClock.elapsed() > kPauseLimitMs) {
             m_paused = false;
             finish(false, "目标掉线超过 2 分钟，测试中止。");
@@ -562,7 +650,10 @@ void FuncTestPanel::tick() {
             setStepState(4, 2);
             emit sigLog("[FUNC] 按键 BT2 PASS");
             if (m_physKeysBlocked) { sendCmd(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0)); m_physKeysBlocked = false; }
-            setPhase(PhDm);
+            setPhase(PhRestoreMode);
+            m_running = false;   /* 无 ALS 切换时也走恢复收尾(保持 RUN 并退出测试态) */
+            m_resultPendingOk = true;
+            m_resultPendingReason = "全部测试通过";
             break;
         }
         if (elapsed > 5000) finish(false, "按键 BT2 未松开：请确认按键已释放。");
@@ -585,31 +676,13 @@ void FuncTestPanel::tick() {
     }
     case PhRestoreMode: {
         bool alsNow = m_tele.contains("cfg_params") && (((m_tele["cfg_params"].toUInt() >> 8) & 1u) != 0);
-        if (!alsNow || elapsed > 9000) {
+        if (!m_alsSwitched || !alsNow || elapsed > 9000) {
             sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_MINUS, 0));
             sendCmd(Command(CmdType::WRITE_8, OFS_OVR_KEY_PLUS, 0));
             emit sigLog("[FUNC] 已恢复原工作模式");
             completeFinish(m_resultPendingOk, m_resultPendingReason);
             break;
         }
-        break;
-    }
-    case PhDm: {
-        QString uuid = m_getUuid ? m_getUuid(m_sn) : QString();
-        if (uuid.isEmpty()) {
-            finish(false, "未读取到设备 UUID，无法生成 DM 码。");
-            break;
-        }
-        QImage img = DataMatrix::renderImage(uuid, 8, 4);
-        if (img.isNull()) {
-            finish(false, "DM 码生成失败（内容过长？）。");
-            break;
-        }
-        m_dmImage->setPixmap(QPixmap::fromImage(img).scaled(230, 230, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        m_dmImage->show();
-        setStepState(5, 2);
-        emit sigLog("[FUNC] DM 码已生成: " + uuid);
-        finish(true, "全部测试通过");
         break;
     }
     case PhDone:
@@ -645,16 +718,28 @@ void FuncTestPanel::completeFinish(bool ok, const QString& reason) {
     m_btnStart->setEnabled(true);
     m_btnStop->setEnabled(false);
     if (ok) {
-        for (int i = 0; i < 6; i++) if (m_stepState[i] != 2) setStepState(i, 2);
+        for (int i = 0; i < 5; i++) if (m_stepState[i] != 2) setStepState(i, 2);
         m_result->setText("PASS");
         m_result->setStyleSheet("font-size: 32pt; font-weight: bold; color: white; border: 2px solid #198754; border-radius: 8px; background: #198754;");
-        setInstruction("✅ 全部测试通过：LED / 光感 / 按键 / DM 码 均正常。");
+        setInstruction("全部测试通过：LED / 光感 / 按键 均正常。DM 码已生成。");
+        /* DM 码是最终产物(非测试项): 通过后生成并展示 */
+        QString uuid = m_getUuid ? m_getUuid(m_sn) : QString();
+        if (!uuid.isEmpty()) {
+            QImage img = DataMatrix::renderImage(uuid, 8, 4);
+            if (!img.isNull()) {
+                m_dmImage->setPixmap(QPixmap::fromImage(img).scaled(230, 230, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                m_dmImage->setToolTip(uuid);
+                m_dmImage->show();
+            }
+        }
         emit sigLog("[FUNC] ***** 全部测试通过 PASS *****");
     } else {
         m_result->setText("FAIL");
         m_result->setStyleSheet("font-size: 32pt; font-weight: bold; color: white; border: 2px solid #DC3545; border-radius: 8px; background: #DC3545;");
-        setInstruction("❌ " + reason);
+        setInstruction("测试失败：" + reason);
         emit sigLog("[FUNC] 测试失败: " + reason);
     }
+    saveRecord(ok, reason);
+    refreshHistory();
     updateLive();
 }
