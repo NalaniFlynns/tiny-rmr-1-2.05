@@ -35,8 +35,8 @@ const QStringList kStepNames = {
     "LED 点亮/回显",
     "光感 - 遮挡(暗)",
     "光感 - 见光(亮)",
-    "按键 BT1(+)",
-    "按键 BT2(-)",
+    "按键 BT1(-)",
+    "按键 BT2(+)",
 };
 /* 光感阈值: OPT3001 分辨率为 0.01 lux/bit, 固件 lux_raw 即 0.01 lux, 真实 lux = lux_raw/100 */
 constexpr int kAlsDarkLux   = 10;      /* 真实 lux: 遮挡后须 < 10 lux */
@@ -346,17 +346,17 @@ void FuncTestPanel::setPhase(Phase p) {
     case PhKeyBT1:
         setStepState(3, 1);
         if (!m_physKeysBlocked) { sendCmd(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 1)); m_physKeysBlocked = true; }
-        setInstruction("按键测试(1/2)：请【按下并松开】 BT1（+）键…");
+        setInstruction("按键测试(1/2)：请【按下并松开】 BT1（-）键…");
         break;
     case PhKeyBT1Rel:
-        setInstruction("按键测试(1/2)：请【松开】 BT1（+）键…");
+        setInstruction("按键测试(1/2)：请【松开】 BT1（-）键…");
         break;
     case PhKeyBT2:
         setStepState(4, 1);
-        setInstruction("按键测试(2/2)：请【按下并松开】 BT2（-）键…");
+        setInstruction("按键测试(2/2)：请【按下并松开】 BT2（+）键…");
         break;
     case PhKeyBT2Rel:
-        setInstruction("按键测试(2/2)：请【松开】 BT2（-）键…");
+        setInstruction("按键测试(2/2)：请【松开】 BT2（+）键…");
         break;
     case PhRestoreMode:
         setInstruction("测试结束：正在收尾…");
@@ -712,6 +712,9 @@ void FuncTestPanel::completeFinish(bool ok, const QString& reason) {
     if (!m_ledRestored) sendCmd(Command(CmdType::WRITE_8, OFS_OVR_LED_MODE, 0));
     if (m_physKeysBlocked) { sendCmd(Command(CmdType::WRITE_8, OFS_OVR_BLOCK_PHYS_KEYS, 0)); m_physKeysBlocked = false; }
     if (m_pollFast && m_pollCtrl) { m_pollCtrl(m_sn, false); m_pollFast = false; }
+    /* 测试结束自动恢复出厂(仅用户侧模式配置, 保留校准值等参数) */
+    sendCmd(Command(CmdType::SEND_SYS_CMD, 8));
+    emit sigLog("[FUNC] 测试结束已自动恢复出厂设置(用户配置, 保留校准)");
     /* 退出测试模式, 保持 RUN */
     sendCmd(Command(CmdType::SEND_SYS_CMD, 6));
 
