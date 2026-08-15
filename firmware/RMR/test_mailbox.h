@@ -86,7 +86,7 @@ typedef struct {
     char     fw_version_str[16];
     uint32_t vbatt_raw_mv;      /* 原始 ADC 电压(未滤波), 0xB0 */
     uint32_t est_hw_power_uw;   /* hw power (batt side) = vbatt_raw x i_avg, 0xB4 */
-    uint32_t sys_clk_khz;       /* SYSOSCCFG.FREQ: 0=SYSOSC base 32M/1=4M, 上报 32000/4000, 0xB8 */
+    uint32_t sys_clk_khz;       /* 恒定 24000: MSPM0C110x SYSOSC 无法真正降频, 0xB8 */
     uint32_t boot_refuse_reason;/* 最近一次开机被拒绝的原因, 0xBC */
 } Test_Mailbox_t;
 

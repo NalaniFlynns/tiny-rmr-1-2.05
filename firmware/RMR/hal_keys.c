@@ -109,6 +109,17 @@ KeyEvent_t keys_task(void) {
     bt2_was_down = b2;
     both_was_down = both_now;
 
+    /* 干净松开(双键均未按下且上一拍也非双键): 复位双键状态机, 防止 5s 事件/
+       异常中断后 both_released/both_handled_5s 残留, 导致下一次双按瞬间判定
+       超时长按(表现为"一按就开机") */
+    if (!b1 && !b2 && !both_was_down) {
+        both_released = true;
+        both_handled_1_5s = false;
+        both_handled_5s = false;
+        both_release_handled = false;
+        both_down_tick = 0;
+    }
+
     if (evt != EVT_NONE) {
         g_inactivity_sec = 0;
         if (g_is_dimmed) { 

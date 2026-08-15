@@ -57,7 +57,7 @@ void test_mailbox_task(void) {
     g_test_box.vbatt_raw_mv = g_vbatt_mv_raw;
     g_test_box.sys_state_mirror = sys_state;
     g_test_box.rst_cause = (uint8_t)g_rst_cause;
-    g_test_box.sys_clk_khz = (SYSCTL->SOCLOCK.SYSOSCCFG & SYSCTL_SYSOSCCFG_FREQ_MASK) ? 4000u : 32000u;
+    g_test_box.sys_clk_khz = 24000u;   /* MSPM0C110x SYSOSC 恒定 24MHz(4M 写无效), 真实 tick=1ms */
     g_test_box.cfg_params = sys_memory.params;   /* 每 tick 同步, 让调试器实时显示挡位/ALS偏移变化 */
     g_test_box.current_level = sys_memory.params & 0xFF;
     g_test_box.current_brt_val = g_current_brt; 

@@ -4,6 +4,11 @@
 
 ---
 
+## 更新记录：2026-08-15（下午），固件 V4.3.4 补丁：修复计时快 6 倍（1.5s 一按就亮/5s 不满）+ 关机不进 STANDBY1
+- **修复 1（计时快 ~6 倍，根因）**：MSPM0C110x 的 SYSOSC **实际只能运行在 24MHz**——写 SYSOSCCFG.FREQ=1（4M）寄存器生效但硅片仍以 24MHz 跑，而代码又按 4M 把 TIMG14 LOAD 设成 4000，导致 g_tick_ms 变成 167us/tick。所有基于 tick 的计时（双键 1.5s 开机/关机、5s 模式切换、LVP/ALS 时延）被压缩约 6 倍：表现为"一按就亮、5s 也不满"。修复：`sysclk_set_freq()` 恒定 24MHz、LOAD 恒为 24000-1，g_tick_ms 恒为真 1ms（实测 2036 tick/2s 墙钟）；OFF 态短暂运行不降频（STANDBY1 深睡停机才是 uA 级功耗来源）
+- **修复 2（关机后不进 STANDBY1）**：关机路径 `g_off_pending` 在 5s 事件/异常松开后残留为 1，把深睡分支 `!g_off_pending` 卡死 → PMODECFG 恒 0、SWD 不断开。修复：OFF 态深睡前自愈——`g_off_pending && key_is_idle()` 则清零；同时 hal_keys 在干净松开（双键均释放且上一拍非双键）时复位 both_released/both_handled_1_5s/both_handled_5s/both_release_handled/both_down_tick，防止残留导致下一次双按瞬间判定超时长按
+- **修复 3（mailbox 时钟上报）**：`sys_clk_khz` 恒报 24000（不再按 SYSOSCCFG.FREQ 报 4000，那只是寄存器假象）
+- **验证**：六变体全部重建（V4.3.4_DBG/DBGL/DIRECT/BATT/ECO_D/ECO_B，0 错误 0 警告）；RMRDebugger 烧录 RMR_DBGL.hex 后实测：g_tick_ms 真 1ms；mailbox cmd=7 关机后 PMODECFG=1（SYSCTL_PMODECFG_DSLEEP_STANDBY）、内核寄存器不可读、SWD 断开 → **STANDBY1 已真实进入**。实体按键 1.5s 开机/关机、5s 切换待物理验证
 ## 更新记录：2026-08-15，固件 V4.3.4：修复上电自动开机失效 + STANDBY1 按键无法开机（唤醒加固）
 - **修复 1（上电自动开机失效，根因）**：V4.3.3 的 NVM off-intent 哨兵（eserved[0]=0x5A）用 (cold_boot || !g_off_intent) && !nvm_off_intent_get() 把**冷启动也拦截**——正常断电再上电时 SRAM 丢失但 NVM 哨兵仍在 → 永不自动开机。修复为 cold_boot || (!g_off_intent && !nvm_off_intent_get())：真实上电永远放行 AUTO_POWER_ON（启动成功即清哨兵），仅热复位（WWDT/调试器）带 off-intent 时保持关机
 - **修复 2（STANDBY1 按键无法开机，唤醒加固）**：原深睡只依赖 WUEN/WCOMP + GPIO 边沿唤醒，历史概率性失效导致按键无响应。数据手册确认 STANDBY1 下 TIMG14 由 32k LFCLK 驱动且 PD0 中断可唤醒——改为**不停 TIMG14、不屏蔽其中断**，LOAD=24000 → ~750ms 周期中断唤醒轮询按键（STANDBY_TIMG14_LOAD_32K），WUEN 保留即时唤醒；周期唤醒无按键时**跳过 battery_resume 省电**，按键唤醒才重测电压；唤醒后显式 sysclk_set_freq(false) 恢复关机态 4MHz/1ms tick

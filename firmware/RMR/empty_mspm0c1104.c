@@ -60,18 +60,16 @@ static void tick_timer_init(void) {
     DL_TimerG_startCounter(TIMG14);
 }
 
-/* ECO dynamic clock (all builds): RUN=24MHz, OFF/FLASH=4MHz low power;
-   GPTIMER14 re-clocked so g_tick_ms stays true 1ms. */
+/* MSPM0C110x 的 SYSOSC 实际只能运行在 24MHz: SYSOSCCFG.FREQ=1(4M) 写入后寄存器
+   生效但硅片仍以 24MHz 跑, 若再把 TIMG14 LOAD 设成 4000, g_tick_ms 会变成
+   167us/tick, 全部按键/ALS/LVP 计时被压缩约 6 倍(1.5s 一按就亮、5s 切换也不满).
+   修复: 恒定 24MHz, LOAD 恒为 CPUCLK_FREQ/1000-1, g_tick_ms 恒为真 1ms;
+   OFF 态短暂运行不降频(STANDBY1 深睡停机才是 uA 级功耗来源). */
 static void sysclk_set_freq(bool high) {
+    (void)high;   /* 全版本恒定 24MHz: 保留调用点, 但不再切 4M */
     DL_TimerG_stopCounter(TIMG14);
-    if (high) {
-        DL_SYSCTL_setSYSOSCFreq(DL_SYSCTL_SYSOSC_FREQ_BASE);
-        DL_TimerG_setLoadValue(TIMG14, CPUCLK_FREQ / 1000u - 1u);
-    } else {
-        DL_SYSCTL_setSYSOSCFreq(DL_SYSCTL_SYSOSC_FREQ_4M);
-        DL_TimerG_setLoadValue(TIMG14, 4000000u / 1000u - 1u);
-    }
-    delay_cycles(1000);   /* 等 SYSOSC gear shift 稳定 */
+    DL_TimerG_setLoadValue(TIMG14, CPUCLK_FREQ / 1000u - 1u);
+    delay_cycles(1000);   /* 稳定后重启 */
     DL_TimerG_startCounter(TIMG14);
 }
 
@@ -219,7 +217,7 @@ int main(void) {
         delay_cycles(CPU_CYCLES_PER_MS);
 #endif
 
-        /* Dynamic clock (all builds): RUN/TEST/ALS_ERR=24MHz, OFF/FLASH=4MHz */
+        /* 恒定 24MHz: MSPM0C110x SYSOSC 无法真正降频, 切换寄存器只会造成计时失真 */
         {   static uint8_t sysclk_high = 1;
             bool want_high = (sys_state == SYS_RUN || sys_state == SYS_LVP_CRIT ||
                               sys_state == SYS_ALS_ERR || sys_state == SYS_TEST_MODE);
@@ -373,6 +371,10 @@ int main(void) {
                 }
             }
 
+            /* 自愈: 关机路径若因 5s 事件/异常松开导致 g_off_pending 残留, 只要
+               物理键全松开即放行深睡, 否则 STANDBY1 永远进不去(关机后 SWD 不断开) */
+            if (g_off_pending && key_is_idle()) g_off_pending = false;
+
 #if DEBUG_BUILD
             /* DEBUG build: skip OFF deep sleep (busy loop), SWD always on */
 #else
@@ -426,13 +428,13 @@ int main(void) {
                        改为 24000 -> 24001/32000 ~= 750ms 零事件中断, 周期性唤醒轮询
                        按键, 作为 WUEN/GPIO 即时唤醒之外的兜底(历史 WUEN 概率性失效
                        导致设备深睡后按键无响应). 唤醒后由 sysclk_set_freq(false)
-                       恢复 4MHz + 1ms LOAD. */
+                       恢复 24MHz + 1ms LOAD. */
                     NVIC_EnableIRQ(TIMG14_INT_IRQn);
                     DL_TimerG_setLoadValue(TIMG14, STANDBY_TIMG14_LOAD_32K);
                     DL_SYSCTL_setPowerPolicySTANDBY1();
                     __WFI();   /* IRQ 保持使能: TIMG14 周期中断即唤醒源, 不能 PRIMASK 屏蔽 */
                     DL_SYSCTL_setPowerPolicyRUN0SLEEP0();
-                    sysclk_set_freq(false);   /* 显式恢复关机态 4MHz + 1ms tick */
+                    sysclk_set_freq(false);   /* 显式恢复 24MHz + 1ms tick */
                 } else
 #endif
                 {
