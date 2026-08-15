@@ -12,6 +12,7 @@ constexpr uint32_t BASE_ADDR = 0x20000000;
 #define OFS_HW_POWER_UW         0xB4
 #define OFS_SYS_CLK_KHZ         0xB8   /* V4.3.4+: SYSOSCCFG.FREQ -> 32000/4000 */
 #define OFS_BOOT_REFUSE         0xBC   /* V4.3.4+: 开机拒绝原因 0=NONE 1=VOLT 2=OFF_INTENT 3=NO_AUTO_FLAG */
+#define OFS_STANDBY_CNT         0xC0   /* V4.3.4+: 本次上电后进入 STANDBY1 的次数(SRAM 保留, 唤醒后可读) */
 constexpr uint32_t ADDR_UUID = 0x41C40010;
 
 // 銆愭牳蹇冩洿鏂般€戯細涓ユ牸瀵归綈鏂扮増 Test_Mailbox_t 鐨勫唴瀛樼粨鏋?

@@ -179,6 +179,7 @@ int main(void) {
     static uint8_t lvp_crit_cnt = 0;
     static uint32_t flash_mode_tick = 0;
     static bool g_off_pending = false;   /* 1.5s ?????????, ???? standby */
+    static bool g_stby_session = false;  /* 本次 OFF 会话是否已进入过 STANDBY1 */
 
 #if FEATURE_AUTO_POWER_ON
     /* Cold boot always honors AUTO_POWER_ON: a real power-on must relight the
@@ -255,9 +256,13 @@ int main(void) {
             while(1) { __WFI(); }
         }
 #endif
-        /* 无操作自动调暗/关机 */
+        /* 无操作自动调暗/关机
+           (tick 差值计数: %1000 在 delay_cycles 忙等构建(DIRECT/BATT/DBG)主循环 >1ms 时
+           会漏整秒边界, 实测 40min 被拖到 ~108min; 差值法无论循环多慢都精确 1 次/秒) */
 #if FEATURE_INACTIVITY_AUTO_DIM_OFF
-        if (g_tick_ms % TIME_SEC_MS == 0) {
+        static uint32_t last_sec_tick = 0;
+        if (g_tick_ms - last_sec_tick >= TIME_SEC_MS) {
+            last_sec_tick = g_tick_ms;
             if ((sys_state == SYS_RUN || sys_state == SYS_TEST_MODE) && (sys_memory.features & FLAG_INACTIVITY_AUTO_DIM)) {
                 g_inactivity_sec++;
                 if (!g_is_dimmed && g_inactivity_sec > TIME_AUTO_DIM_S) { 
@@ -375,6 +380,8 @@ int main(void) {
                物理键全松开即放行深睡, 否则 STANDBY1 永远进不去(关机后 SWD 不断开) */
             if (g_off_pending && key_is_idle()) g_off_pending = false;
 
+
+
 #if DEBUG_BUILD
             /* DEBUG build: skip OFF deep sleep (busy loop), SWD always on */
 #else
@@ -422,6 +429,12 @@ int main(void) {
                 DL_TimerG_setCaptureCompareValue(HW_PWM_INST, PWM_REG_MAX, HW_PWM_INDEX);
 #if FEATURE_LOWPOWER_STANDBY
                 if (sys_memory.features & FLAG_LOWPOWER_STANDBY) {
+                    /* STANDBY 确认计数: 每次 OFF 会话第一次真正进深睡前 +1(SRAM 在
+                       STANDBY1 下保留, 唤醒后 RMRDebugger 可读回; 离开 OFF 时复位) */
+                    if (!g_stby_session) {
+                        g_stby_session = true;
+                        g_test_box.standby_entry_cnt++;
+                    }
                     /* 周期唤醒加固(修复"按键无法开机"): STANDBY1 下 TIMG14 由 32k
                        LFCLK 驱动(数据手册 Table 8-1: LFCLK to TIMG14/TIMG8 = 32k,
                        Wake Sources = PD0 IRQ), 因此不停表、不屏蔽其中断, 仅把 LOAD
@@ -461,6 +474,7 @@ int main(void) {
 #endif
         } 
         else if (sys_state == SYS_RUN || sys_state == SYS_LVP_CRIT) {
+            g_stby_session = false;   /* 已离开 OFF: 下次关机重新计数 */
             if (key == EVT_BOTH_LONG_1_5S) {
                 sys_state = SYS_OFF;
                 g_off_intent = true;

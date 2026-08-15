@@ -88,6 +88,7 @@ typedef struct {
     uint32_t est_hw_power_uw;   /* hw power (batt side) = vbatt_raw x i_avg, 0xB4 */
     uint32_t sys_clk_khz;       /* 恒定 24000: MSPM0C110x SYSOSC 无法真正降频, 0xB8 */
     uint32_t boot_refuse_reason;/* 最近一次开机被拒绝的原因, 0xBC */
+    uint32_t standby_entry_cnt; /* 本次上电后进入 STANDBY1 深睡的次数(SRAM 保留, 唤醒后可读), 0xC0 */
 } Test_Mailbox_t;
 
 /* boot_refuse_reason 取值 */

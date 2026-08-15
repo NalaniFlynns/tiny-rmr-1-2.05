@@ -785,7 +785,7 @@ void MainWindow::setupUI() {
     vMon->addLayout(lPoll);
 
     QStringList monTexts = {"State", "VBATT RAW(mV)", "Est R(Ω)", "Level", "Brt Tgt", "Duty", "V_LED(mV)", "V-Limit", "I-Lim(Brt)", "P-Limit(W)", "I-Lim(LED)", "Est.P(mW)", "HW P(mW)", "Avg I(mA)", "Peak I(mA)", "HW PWM", "I2C Sensor", "I2C Err", "Lux(Filt)", "Lux(RAW)", "ALS Off", "NVM", "Save Fail", "Inactive", "NVM Seq", "NVM Sector", "NVM Slot", "Ovr Mode", "Cmd Ack", "FW Ver", "Run Flags", "Params", "Sys Clk", "Boot Refuse"};
-    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "p_hw", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "als_off", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags", "cfg_params", "sys_clk", "boot_refuse"};
+    QStringList monKeys = {"state", "vbatt", "dyn_r", "level", "brt", "duty", "v_led", "l_v_drop", "l_i_brt", "l_p_avg", "l_i_led", "p_led", "p_hw", "i_avg", "i_peak", "pwm", "sensor", "err_cnt", "lux", "lux_raw", "als_off", "nvm_dirty", "nvm_fail", "inactivity", "nvm_seq", "nvm_sector", "nvm_slot", "ovr_mode", "cmd_ack", "fw_ver", "flags", "cfg_params", "sys_clk", "boot_refuse", "stby_cnt"};
     const int MON_COLS = 10;
     QGridLayout *gridMon = new QGridLayout();
     gridMon->setHorizontalSpacing(6);
@@ -1937,7 +1937,9 @@ void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
 
     /* V4.3.4+ mailbox 尾部扩展: SYSOSCCFG 时钟与开机拒绝原因(旧固件无此字段则显示 "-") */
     uint32_t clkKhz = data.contains("sys_clk") ? data["sys_clk"].toUInt() : 0;
-    monVars["sys_clk"]->setText((clkKhz == 32000 || clkKhz == 4000) ? QString("%1MHz").arg(clkKhz / 1000) : "-");
+    monVars["sys_clk"]->setText((clkKhz == 24000 || clkKhz == 32000 || clkKhz == 4000) ? QString("%1MHz").arg(clkKhz / 1000) : "-");
+    uint32_t stby = data.contains("stby_cnt") ? data["stby_cnt"].toUInt() : 0;
+    monVars["stby_cnt"]->setText(stby ? QString::number(stby) + "x" : "-");
     uint32_t refuse = data.contains("boot_refuse") ? data["boot_refuse"].toUInt() : 0xFFFFFFFF;
     static const char *refuseNames[] = {"OK", "Voltage", "OffIntent", "NoAutoFlag"};
     monVars["boot_refuse"]->setText(refuse <= 3 ? refuseNames[refuse] : "-");
