@@ -209,6 +209,11 @@ void test_mailbox_task(void) {
             g_test_box.ovr_key_plus = 0;
             g_test_box.ovr_als_en = 0;
             g_test_box.ovr_block_phys_keys = 0;
+        } else if (c == 8) {   /* factory reset: user config only, keep calibration */
+            nvm_reset_user_config();
+            if (nvm_save_dirty()) g_test_box.status = TEST_ST_OK;
+            else g_test_box.status = TEST_ST_ERR_FLASH;
+            test_box_sync_cfg();  /* sync mirror after reset, for GUI readback */
             g_test_box.status = TEST_ST_OK;
         } else {
             g_test_box.status = TEST_ST_ERR_INV_CMD;

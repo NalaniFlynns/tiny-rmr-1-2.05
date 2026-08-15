@@ -9,6 +9,7 @@ bool nvm_save_dirty(void);
 void nvm_background_task(void);
 bool nvm_is_dirty(void);
 void nvm_force_factory_reset(void);
+void nvm_reset_user_config(void);
 uint32_t nvm_get_sector_addr(void);
 uint32_t nvm_get_slot_idx(void);
 uint8_t nvm_get_save_fail_cnt(void);

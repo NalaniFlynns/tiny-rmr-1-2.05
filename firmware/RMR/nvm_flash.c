@@ -230,6 +230,15 @@ uint32_t nvm_get_slot_idx(void) { return 0; }
 uint8_t nvm_get_save_fail_cnt(void) { return 0; }
 #endif
 
+/* Reset user-side mode config only; calibration & other params are preserved. */
+void nvm_reset_user_config(void) {
+    if (sys_memory.magic != NVM_MAGIC) return;
+    sys_memory.params = CFG_DEFAULT_LEVEL | (CFG_DEFAULT_ALS_EN << 8) | (CFG_DEFAULT_ALS_OFFSET << 16);
+    sys_memory.features = DEFAULT_FEATURE_FLAGS;
+    sys_memory.default_level = CFG_DEFAULT_LEVEL;
+    nvm_mark_dirty();
+}
+
 void nvm_force_factory_reset(void) {
     if (sys_memory.magic == NVM_MAGIC) {
         /* 运行时(已初始化): 立即恢复出厂并标记保存 */
