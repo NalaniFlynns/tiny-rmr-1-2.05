@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "datamatrix.h"
 #include <QApplication>
 #include <windows.h>
     int prmMax[] = {9999, 999999, 5000, 100000, 99999999, 1000, 5000, 5000, 8, 20, 20, 20};
@@ -8,6 +9,7 @@
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QDateTime>
+#include <QPixmap>
 #include <QFileDialog>
 #include <QSqlQuery>
 #include <QFile>
@@ -598,8 +600,9 @@ void MainWindow::setupUI() {
     txtUuid->setStyleSheet("font-family: Consolas; color: #D35400; border: 1px solid #CCC;");
     hl->addWidget(txtUuid);
 
-    btnDxf = new QPushButton("DXF");
-    connect(btnDxf, &QPushButton::clicked, this, &MainWindow::exportDxf);
+    btnDxf = new QPushButton("显示DM码");
+    btnDxf->setToolTip("点击显示当前设备 UUID 的 DataMatrix 码");
+    connect(btnDxf, &QPushButton::clicked, this, &MainWindow::showDmCode);
     hl->addWidget(btnDxf);
 
     lblVer = new QLabel("FW: N/A");
@@ -1166,6 +1169,28 @@ void MainWindow::setupUI() {
     vTestMain->addWidget(testSplitter, 1);
 
     tabs->addTab(tabTest, "2. Test & Calibration Mode");
+
+    QWidget *tabFunc = new QWidget();
+    QVBoxLayout *vFunc = new QVBoxLayout(tabFunc);
+    funcTest = new FuncTestPanel(tabFunc);
+    funcTest->setCommandSender([this](const Command& c){
+        uint32_t sn = cmbActiveProbe->currentData().toUInt();
+        if (activeWorkers.contains(sn)) activeWorkers[sn]->enqueueCommand(c);
+    });
+    funcTest->setUuidGetter([this](uint32_t sn){ return probeUuids.value(sn); });
+    funcTest->setActiveSnProvider([this](){ return cmbActiveProbe->currentData().toUInt(); });
+    funcTest->setPollingController([this](uint32_t sn, bool fast){
+        BaseWorker *w = activeWorkers.value(sn, nullptr);
+        if (!w) return;
+        if (fast) { w->enablePolling = true; w->pollIntervalMs = 80; }
+        else {
+            w->enablePolling = (sn == cmbActiveProbe->currentData().toUInt() && chkPoll && chkPoll->isChecked());
+            w->pollIntervalMs = spinPollMs ? spinPollMs->value() : 150;
+        }
+    });
+    connect(funcTest, &FuncTestPanel::sigLog, this, [this](const QString& s){ onLog(0, s); });
+    vFunc->addWidget(funcTest);
+    tabs->addTab(tabFunc, "3. Function Test");
     /* 切换页签时应用待定分栏比例 (页签显示后才有真实尺寸) */
     connect(tabs, &QTabWidget::currentChanged, this, [this](int){ applyPendingRatios(); });
     mainLayout->addWidget(tabs, 1);
@@ -1684,8 +1709,25 @@ void MainWindow::updateLed() {
     }
 }
 
-void MainWindow::exportDxf() {
-    QMessageBox::information(this, "Notice", "C++ DXF generation requires external libdmtx library.");
+void MainWindow::showDmCode() {
+    uint32_t sn = cmbActiveProbe->currentData().toUInt();
+    QString uuid = probeUuids.value(sn);
+    if (uuid.isEmpty()) { showModalMsg("Error", "请先连接探针并读取 UUID。", true); return; }
+    QImage img = DataMatrix::renderImage(uuid, 10, 4);
+    if (img.isNull()) { showModalMsg("Error", "DM 码生成失败。", true); return; }
+    QDialog dlg(this);
+    dlg.setWindowTitle("设备 DM 码");
+    QVBoxLayout *lay = new QVBoxLayout(&dlg);
+    QLabel *lbl = new QLabel(&dlg);
+    lbl->setPixmap(QPixmap::fromImage(img).scaled(300, 300, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    lbl->setAlignment(Qt::AlignCenter);
+    QLabel *txt = new QLabel(uuid, &dlg);
+    txt->setAlignment(Qt::AlignCenter);
+    txt->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    QPushButton *ok = new QPushButton("关闭", &dlg);
+    connect(ok, &QPushButton::clicked, &dlg, &QDialog::accept);
+    lay->addWidget(lbl); lay->addWidget(txt); lay->addWidget(ok, 0, Qt::AlignCenter);
+    dlg.exec();
 }
 
 void MainWindow::onStatus(uint32_t sn, int code, const QString& msg) {
@@ -1797,34 +1839,32 @@ void MainWindow::onMsg(uint32_t sn, const QString& title, const QString& text) {
 }
 
 void MainWindow::showModalMsg(const QString& title, const QString& text, bool critical) {
+    /* 队列形式弹窗: 同内容窗口只允许在当前显示 + 等待队列中存在一个, 多余的直接忽略;
+       不同内容按 FIFO 排队, 关闭当前窗口后弹出下一个。 */
     QString key = title + QChar(1) + text;
-    qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (modalMsgBox && modalMsgBox->isVisible()) {
-        /* 已有弹窗打开: 同内容去重, 不同内容直接更新并置顶, 不叠加新窗口 */
-        if (modalMsgBox->windowTitle() == title && modalMsgBox->text() == text) return;
-        modalMsgBox->setWindowTitle(title);
-        modalMsgBox->setText(text);
-        modalMsgBox->setIcon(critical ? QMessageBox::Critical : QMessageBox::Information);
-        modalMsgBox->raise(); modalMsgBox->activateWindow();
-        return;
-    }
-    /* 刚关闭过的同一条消息 5s 内不再重复弹窗 */
-    if (key == lastModalMsgKey && now - lastModalMsgMs < 5000) return;
-    if (modalMsgBox) { delete modalMsgBox; modalMsgBox = nullptr; }
+    if (m_msgKeys.contains(key)) return;          /* 已显示或已在队列 -> 忽略 */
+    m_msgKeys.insert(key);
+    m_msgQueue.enqueue({title, text, critical, key});
+    if (!modalMsgBox) showNextModalMsg();
+}
+
+void MainWindow::showNextModalMsg() {
+    if (m_msgQueue.isEmpty() || modalMsgBox) return;
+    MainWindow::ModalMsg item = m_msgQueue.dequeue();
     modalMsgBox = new QMessageBox(this);
-    modalMsgBox->setWindowTitle(title);
-    modalMsgBox->setText(text);
-    modalMsgBox->setIcon(critical ? QMessageBox::Critical : QMessageBox::Information);
+    modalMsgBox->setWindowTitle(item.title);
+    modalMsgBox->setText(item.text);
+    modalMsgBox->setIcon(item.critical ? QMessageBox::Critical : QMessageBox::Information);
     modalMsgBox->setModal(true);
-    connect(modalMsgBox, &QMessageBox::finished, this, [this, key](int){
-        lastModalMsgKey = key;
-        lastModalMsgMs = QDateTime::currentMSecsSinceEpoch();
+    connect(modalMsgBox, &QMessageBox::finished, this, [this](int){
+        m_msgKeys.remove(modalMsgBoxKey);
         modalMsgBox->deleteLater();
         modalMsgBox = nullptr;
+        modalMsgBoxKey.clear();
+        showNextModalMsg();
     });
+    modalMsgBoxKey = item.key;
     modalMsgBox->show();
-    lastModalMsgKey = key;
-    lastModalMsgMs = now;
 }
 
 void MainWindow::onAutoTestRes(uint32_t sn, bool success, const QString& msg) {
@@ -1885,6 +1925,7 @@ void MainWindow::onPowerZTelemetry(double vbus, double ibus, double vbusAvg, dou
     ipcBroadcast(pz);
 }
 void MainWindow::onTelemetry(uint32_t sn, const QVariantMap& data) {
+    if (funcTest) funcTest->updateTelemetry(sn, data);
     if (sn != cmbActiveProbe->currentData().toUInt()) return;
     lastTelemetry[sn] = data;
     QJsonObject t1; t1["type"]="telemetry"; t1["sn"]=QString::number(sn); t1["fields"]=QJsonObject::fromVariantMap(data); ipcBroadcast(t1);

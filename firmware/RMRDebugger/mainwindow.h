@@ -30,8 +30,11 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QHash>
+#include <QQueue>
+#include <QSet>
 
 #include "DebugWorkers.h"
+#include "functest.h"
 #include "PowerZWorker.h"
 
 class MainWindow : public QMainWindow {
@@ -74,7 +77,7 @@ private slots:
     void updateAls();
     void updateLed();
     void onLedModeChanged();
-    void exportDxf();
+    void showDmCode();
 
 private:
     void setupUI();
@@ -91,6 +94,7 @@ private:
     void applyTheme();
     void setFwPath(const QString& path);
     void showModalMsg(const QString& title, const QString& text, bool critical);
+    void showNextModalMsg();
     void ipcSend(QTcpSocket *s, const QJsonObject& obj);
     void ipcBroadcast(const QJsonObject& obj);
     void ipcSendHello(QTcpSocket *s);
@@ -117,6 +121,7 @@ private:
     void applyPendingRatios();
 
     QTabWidget *tabs = nullptr;
+    FuncTestPanel *funcTest = nullptr;
     QLabel *lblIndicator;
     QLabel *lblStatus;
     QComboBox *cmbActiveProbe;
@@ -208,7 +213,9 @@ private:
     QHash<uint32_t, int> lastStatusCode;
     QHash<uint32_t, QString> lastStatusMsg;
 
+    struct ModalMsg { QString title; QString text; bool critical; QString key; };
     QMessageBox *modalMsgBox = nullptr;
-    QString lastModalMsgKey;
-    qint64 lastModalMsgMs = 0;
+    QString modalMsgBoxKey;
+    QQueue<ModalMsg> m_msgQueue;
+    QSet<QString> m_msgKeys;
 };

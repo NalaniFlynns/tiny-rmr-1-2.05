@@ -16,6 +16,8 @@ qt_add_executable(rmrdebuger WIN32
     MainWindow.cpp MainWindow.h
     DebugWorkers.cpp DebugWorkers.h   # 【关键修改 2】删掉JLinkWorker，换成新的双擎类
     PowerZWorker.cpp PowerZWorker.h   # Power-Z KM003C 真实电压电流计 (HID)
+    datamatrix.cpp datamatrix.h         # DataMatrix ECC200 编码器 (ZXing 移植)
+    functest.cpp functest.h             # 功能测试插件 (LED/光感/按键/DM码)
     app.rc
     res.qrc
 )
