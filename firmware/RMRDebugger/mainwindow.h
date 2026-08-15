@@ -196,7 +196,7 @@ private:
     QLineEdit *lePzStatSec = nullptr;
     QPushButton *btnPzReset = nullptr;
 
-    /* 本地 IPC 调试接口 (127.0.0.1:7345, JSON 行协议) */
+    /* 本地 IPC 调试接口 (127.0.0.1:17345, JSON 行协议) */
     QTcpServer *ipcServer = nullptr;
     QList<QTcpSocket*> ipcClients;
     QHash<QTcpSocket*, QByteArray> ipcBuffers;

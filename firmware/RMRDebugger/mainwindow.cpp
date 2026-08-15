@@ -236,13 +236,13 @@ void MainWindow::setFwPath(const QString& path) {
 }
 
 void MainWindow::setupIpc() {
-    /* 本地隐藏调试接口: 127.0.0.1:7345, JSON 行协议 (供自动化测试/外部读取实时数据) */
+    /* 本地隐藏调试接口: 127.0.0.1:17345, JSON 行协议 (供自动化测试/外部读取实时数据) */
     ipcServer = new QTcpServer(this);
-    if (!ipcServer->listen(QHostAddress::LocalHost, 7345)) {
+    if (!ipcServer->listen(QHostAddress::LocalHost, 17345)) {
         onLog(0, QString("[SYS] IPC 接口启动失败: %1").arg(ipcServer->errorString()));
         return;
     }
-    onLog(0, "[SYS] IPC 接口已启动: 127.0.0.1:7345 (JSON)");
+    onLog(0, "[SYS] IPC 接口已启动: 127.0.0.1:17345 (JSON)");
     connect(ipcServer, &QTcpServer::newConnection, this, [this](){
         while (QTcpSocket *s = ipcServer->nextPendingConnection()) {
             ipcClients.append(s);
