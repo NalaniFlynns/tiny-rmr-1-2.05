@@ -60,9 +60,8 @@ static void tick_timer_init(void) {
     DL_TimerG_startCounter(TIMG14);
 }
 
-#if POWER_SAVE_BUILD
-/* ECO 动态降频: 非运行态(关机/FLASH) SYSOSC 切 4MHz 低功耗模式, 运行态恢复 24MHz;
-   GPTIMER14 同步重配 LOAD, g_tick_ms 恒为真实 1ms(按键/超时/轮询计时不变) */
+/* ECO dynamic clock (all builds): RUN=24MHz, OFF/FLASH=4MHz low power;
+   GPTIMER14 re-clocked so g_tick_ms stays true 1ms. */
 static void sysclk_set_freq(bool high) {
     DL_TimerG_stopCounter(TIMG14);
     if (high) {
@@ -75,7 +74,6 @@ static void sysclk_set_freq(bool high) {
     delay_cycles(1000);   /* 等 SYSOSC gear shift 稳定 */
     DL_TimerG_startCounter(TIMG14);
 }
-#endif
 
 void TIMG14_IRQHandler(void) {
     DL_TimerG_clearInterruptStatus(TIMG14, DL_TIMER_INTERRUPT_ZERO_EVENT);
@@ -122,6 +120,19 @@ static void update_debug_string(void) {
     while (str_idx < 63) { g_debug_str[str_idx++] = ' '; } g_debug_str[63] = '\0';
 }
 #endif
+
+/* NVM off-intent sentinel (NVM_Data_t.reserved[0]): 0x5A = intentionally off.
+   Persisted so that any reset while OFF (WWDT/BOR/debugger) boots back to OFF
+   instead of honoring AUTO_POWER_ON; only an explicit user power-on clears it. */
+static bool nvm_off_intent_get(void) { return sys_memory.reserved[0] == NVM_OFF_INTENT_MARK; }
+static void nvm_off_intent_set(bool off) {
+    uint8_t v = off ? NVM_OFF_INTENT_MARK : 0x00;
+    if (sys_memory.reserved[0] != v) {
+        sys_memory.reserved[0] = v;
+        nvm_mark_dirty();
+        nvm_save_dirty();
+    }
+}
 
 int main(void) {
     SYSCFG_DL_init();
@@ -172,20 +183,32 @@ int main(void) {
     static bool g_off_pending = false;   /* 1.5s ?????????, ???? standby */
 
 #if FEATURE_AUTO_POWER_ON
-    /* Cold boot always honors AUTO_POWER_ON. Warm resets only auto-boot when
-       the device was NOT intentionally off before the reset (e.g. debugger /
-       flash reset while running); WWDT/SYSRST while OFF stay off - this is
-       what keeps the LED dark after a 1.5s dual-key shutdown. */
-    if (cold_boot || !g_off_intent) {
+    /* Cold boot always honors AUTO_POWER_ON: a real power-on must relight the
+       dot regardless of the persisted off-intent sentinel (V4.3.3 曾用
+       (cold_boot || !off_intent) && !nvm_off_intent 把 NVM 哨兵也拦在冷启动外,
+       导致上电自动开机失效). Warm resets only auto-boot when the device was
+       NOT intentionally off before the reset (e.g. debugger / flash reset while
+       running); WWDT/SYSRST while OFF stay off - this is what keeps the LED
+       dark after a 1.5s dual-key shutdown. */
+    if (cold_boot || (!g_off_intent && !nvm_off_intent_get())) {
         if (sys_memory.features & FLAG_AUTO_POWER_ON) {
             if (battery_startup_check()) {
                 sys_state = SYS_RUN;
                 g_inactivity_sec = 0;
                 g_is_dimmed = false;
                 g_off_intent = false;
+                nvm_off_intent_set(false);
+                g_test_box.boot_refuse_reason = BOOT_REFUSE_NONE;
                 mode_init();
+            } else {
+                g_test_box.boot_refuse_reason = BOOT_REFUSE_VOLT;
             }
+        } else {
+            g_test_box.boot_refuse_reason = BOOT_REFUSE_AUTO_FLAG;
         }
+    } else {
+        /* 热复位且带 off-intent: 保持关机, 记录原因供调试器显示 */
+        g_test_box.boot_refuse_reason = BOOT_REFUSE_OFF_INTENT;
     }
 #endif
 
@@ -196,8 +219,7 @@ int main(void) {
         delay_cycles(CPU_CYCLES_PER_MS);
 #endif
 
-#if POWER_SAVE_BUILD
-        /* ECO 动态降频: 运行态 24MHz, 关机/FLASH 态 SYSOSC 4MHz */
+        /* Dynamic clock (all builds): RUN/TEST/ALS_ERR=24MHz, OFF/FLASH=4MHz */
         {   static uint8_t sysclk_high = 1;
             bool want_high = (sys_state == SYS_RUN || sys_state == SYS_LVP_CRIT ||
                               sys_state == SYS_ALS_ERR || sys_state == SYS_TEST_MODE);
@@ -206,7 +228,6 @@ int main(void) {
                 sysclk_set_freq(want_high);
             }
         }
-#endif
 
         DL_WWDT_restart(WWDT0_INST);
 
@@ -239,14 +260,16 @@ int main(void) {
         /* 无操作自动调暗/关机 */
 #if FEATURE_INACTIVITY_AUTO_DIM_OFF
         if (g_tick_ms % TIME_SEC_MS == 0) {
-            if (sys_state == SYS_RUN && (sys_memory.features & FLAG_INACTIVITY_AUTO_DIM)) {
+            if ((sys_state == SYS_RUN || sys_state == SYS_TEST_MODE) && (sys_memory.features & FLAG_INACTIVITY_AUTO_DIM)) {
                 g_inactivity_sec++;
                 if (!g_is_dimmed && g_inactivity_sec > TIME_AUTO_DIM_S) { 
                     g_is_dimmed = true; 
                 }
                 if (g_inactivity_sec > TIME_AUTO_DIM_S + TIME_AUTO_SHUTDOWN_S) { 
+                    if (sys_state == SYS_TEST_MODE) test_box_exit_test_mode();  /* 调试态超时: 先清授权/覆盖再关机, 防止残留 magic 复活 TEST_MODE */
                     sys_state = SYS_OFF; 
                     g_off_intent = true;
+                    nvm_off_intent_set(true);
                     nvm_save_dirty(); 
                 }
             }
@@ -260,6 +283,7 @@ int main(void) {
                     lvp_ext_cnt = 0;
                     sys_state = SYS_OFF;
                     g_off_intent = true;
+                    nvm_off_intent_set(true);
                     nvm_save_dirty(); 
                 }
             } else { lvp_ext_cnt = 0; }
@@ -277,6 +301,7 @@ int main(void) {
                 g_inactivity_sec = 0;
                 g_is_dimmed = false;
                 g_off_intent = false;
+                nvm_off_intent_set(false);
                 mode_init();
             }
         }
@@ -297,6 +322,8 @@ int main(void) {
                     DL_GPIO_setPins(PORT_OUTPUT, PIN_VCC_EN);
                     delay_cycles(CPU_CYCLES_PER_MS);
 #endif
+                } else {
+                    g_test_box.boot_refuse_reason = BOOT_REFUSE_VOLT;
                 }
             }
             else if (key == EVT_BOTH_LONG_1_5S) {
@@ -305,8 +332,11 @@ int main(void) {
                     g_inactivity_sec = 0;
                     g_is_dimmed = false;
                     g_off_intent = false;
+                    nvm_off_intent_set(false);
+                    g_test_box.boot_refuse_reason = BOOT_REFUSE_NONE;
                     mode_init();
                 } else {
+                    g_test_box.boot_refuse_reason = BOOT_REFUSE_VOLT;
                     led_set_target(100, false); led_update_task(); delay_cycles(CPU_CYCLES_PER_MS * STARTUP_FAIL_BLINK_DELAY_MS);
                     led_set_target(0, false); led_update_task();
                 }
@@ -327,6 +357,8 @@ int main(void) {
                     g_inactivity_sec = 0;
                     g_is_dimmed = false;
                     g_off_intent = false;
+                    nvm_off_intent_set(false);
+                    g_test_box.boot_refuse_reason = BOOT_REFUSE_NONE;
                     if (from_run_hold) {
                         g_is_als_mode = !g_is_als_mode;   /* ALS<->MAN 互切 */
                     } else {
@@ -336,6 +368,8 @@ int main(void) {
                     nvm_mark_dirty();
                     nvm_save_dirty();
                     mode_init();
+                } else {
+                    g_test_box.boot_refuse_reason = BOOT_REFUSE_VOLT;
                 }
             }
 
@@ -344,7 +378,7 @@ int main(void) {
 #else
             if (sys_state == SYS_OFF && !g_off_pending && key_is_idle()
 #if DEBUG_LP_BUILD
-               ) {   /* LP debug: force OFF deep sleep (WFI+STANDBY0), SWD may drop */
+               ) {   /* LP debug: force OFF deep sleep (WFI+STANDBY1), SWD may drop */
 #else
                && !(sys_memory.features & FLAG_SWD_IN_OFF_STATE)) {
 #endif
@@ -354,7 +388,7 @@ int main(void) {
                 DL_GPIO_setUpperPinsPolarity(PORT_BTN, DL_GPIO_PIN_27_EDGE_FALL);
                 DL_GPIO_setLowerPinsPolarity(PORT_BTN, DL_GPIO_PIN_2_EDGE_FALL);
                 DL_GPIO_clearInterruptStatus(PORT_BTN, PIN_BT1 | PIN_BT2);
-                /* STANDBY0: IOMUX IO wakeup (WUEN/WCOMP async level compare) is
+                /* STANDBY1: IOMUX IO wakeup (WUEN/WCOMP async level compare) is
                    the primary wake source; GPIO edge IRQ stays as a backup.
                    WCOMP must be configured before WUEN is enabled. */
                 /* Buttons are active-low (idle=1, pressed=0): compare for 0 so
@@ -369,44 +403,57 @@ int main(void) {
                 NVIC_EnableIRQ(GPIOA_INT_IRQn);
                 NVIC_ClearPendingIRQ(TIMG14_INT_IRQn);
 
-                /* WWDT keeps counting in STANDBY0 (STISM only covers SLEEP), so
-                   with the main loop halted it would reset the device every
-                   500ms. A new WWDT period only loads on the next counter
-                   restart: write the stretch config FIRST, then restart, so
-                   the ~8192s period is active before STANDBY0 is entered.
-                   (Restart-then-write leaves the old 500ms period active and
-                   the WWDT would reset ~500ms into deep sleep.)
-                   write the stretch config FIRST, then restart, so the ~8192s
-                   period is active before STANDBY0 is entered. (Restart-then-
-                   write leaves the old 500ms period active and the WWDT would
-                   reset the device ~500ms into deep sleep.) */
-                WWDT0->WWDTCTL0 = (WWDT_WWDTCTL0_KEY_UNLOCK_W |
-                                   WWDT_WWDTCTL0_PER_EN_25 |
-                                   WWDT_WWDTCTL0_CLKDIV_MAXIMUM |
-                                   WWDT_WWDTCTL0_STISM_STOP);
+                /* WWDTCTL0 is write-once: the first keyed write enables the WWDT
+                   and write-protects the register; ANY later write (including
+                   re-running SYSCFG_DL_WWDT0_init) triggers a WWDT violation ->
+                   BOOTRST. The old "stretch period to ~8192s" trick was illegal
+                   and caused an instant reset on deep-sleep entry; SRAM was lost,
+                   g_por_magic was cleared, cold_boot became true and AUTO_POWER_ON
+                   re-booted the device (LED relights / never stays off).
+                   Fix: use the STANDBY1 power policy - per the datasheet power
+                   mode table WWDT0 is DIS (not clocked) in STANDBY1, so the
+                   watchdog cannot reset the device during long standby. */
                 DL_WWDT_restart(WWDT0_INST);
+                /* 强制灭灯: 直接写 CC=off(不走 led_update_task 渐变), 否则进入 STANDBY 时
+                   TIMG8(PWM) 在 STANDBY1 仍被 32k 时钟驱动, 会保持熄灯前的亮度常亮 */
+                g_last_applied_pwm = PWM_REG_MAX;
+                DL_TimerG_setCaptureCompareValue(HW_PWM_INST, PWM_REG_MAX, HW_PWM_INDEX);
 #if FEATURE_LOWPOWER_STANDBY
                 if (sys_memory.features & FLAG_LOWPOWER_STANDBY) {
-                    DL_SYSCTL_setPowerPolicySTANDBY0();
+                    /* 周期唤醒加固(修复"按键无法开机"): STANDBY1 下 TIMG14 由 32k
+                       LFCLK 驱动(数据手册 Table 8-1: LFCLK to TIMG14/TIMG8 = 32k,
+                       Wake Sources = PD0 IRQ), 因此不停表、不屏蔽其中断, 仅把 LOAD
+                       改为 24000 -> 24001/32000 ~= 750ms 零事件中断, 周期性唤醒轮询
+                       按键, 作为 WUEN/GPIO 即时唤醒之外的兜底(历史 WUEN 概率性失效
+                       导致设备深睡后按键无响应). 唤醒后由 sysclk_set_freq(false)
+                       恢复 4MHz + 1ms LOAD. */
+                    NVIC_EnableIRQ(TIMG14_INT_IRQn);
+                    DL_TimerG_setLoadValue(TIMG14, STANDBY_TIMG14_LOAD_32K);
+                    DL_SYSCTL_setPowerPolicySTANDBY1();
+                    __WFI();   /* IRQ 保持使能: TIMG14 周期中断即唤醒源, 不能 PRIMASK 屏蔽 */
+                    DL_SYSCTL_setPowerPolicyRUN0SLEEP0();
+                    sysclk_set_freq(false);   /* 显式恢复关机态 4MHz + 1ms tick */
+                } else
+#endif
+                {
+                    __disable_irq();   /* controlled WFI: 1ms tick cannot abort it */
+                    __WFI();
+                    __enable_irq();
                 }
-#endif
-                __disable_irq();   /* controlled WFI: 1ms tick cannot abort it */
-                __WFI();
-                __enable_irq();
-#if FEATURE_LOWPOWER_STANDBY
-                DL_SYSCTL_setPowerPolicyRUN0SLEEP0();
-#endif
                 DL_GPIO_disableWakeUp(BUTTONS_BT1_IOMUX);
                 DL_GPIO_disableWakeUp(BUTTONS_BT2_IOMUX);
                 DL_GPIO_disableInterrupt(PORT_BTN, PIN_BT1 | PIN_BT2);
                 NVIC_DisableIRQ(GPIOA_INT_IRQn);
-                /* restore normal 500ms watchdog service */
-                SYSCFG_DL_WWDT0_init();
+                /* WWDT keeps the boot-time 500ms configuration (write-once);
+                   after wake only the counter needs a restart. */
                 DL_WWDT_restart(WWDT0_INST);
 
-                battery_resume();   /* wakeup: re-measure battery */
-                if (g_vbatt_mv_filtered > sys_memory.lvp_ext) {
-                    g_inactivity_sec = 0;
+                /* 周期唤醒(无按键)跳过 battery_resume 省电; 按键唤醒才重测电压 */
+                if (!key_is_idle()) {
+                    battery_resume();   /* wakeup: re-measure battery */
+                    if (g_vbatt_mv_filtered > sys_memory.lvp_ext) {
+                        g_inactivity_sec = 0;
+                    }
                 }
             }
 #endif
@@ -415,9 +462,10 @@ int main(void) {
             if (key == EVT_BOTH_LONG_1_5S) {
                 sys_state = SYS_OFF;
                 g_off_intent = true;
-                g_off_pending = true;       /* ???????: ?????(???5s)?? standby */
+                g_off_pending = true;
                 led_set_target(0, false);   /* ? 1.5s ????, ???????? */
                 led_update_task();
+                nvm_off_intent_set(true);
                 nvm_save_dirty();
             } else {
                 mode_handle_key(key);
@@ -458,8 +506,11 @@ int main(void) {
                     g_inactivity_sec = 0;
                     g_is_dimmed = false;
                     g_off_intent = false;
+                    nvm_off_intent_set(false);
+                    g_test_box.boot_refuse_reason = BOOT_REFUSE_NONE;
                     mode_init();
                 } else {
+                    g_test_box.boot_refuse_reason = BOOT_REFUSE_VOLT;
                     led_set_target(100, false); led_update_task(); delay_cycles(CPU_CYCLES_PER_MS * STARTUP_FAIL_BLINK_DELAY_MS);
                     led_set_target(0, false); led_update_task();
                 }
@@ -503,3 +554,4 @@ int main(void) {
         nvm_background_task();
     }
 }
+

@@ -37,6 +37,14 @@ static void test_box_sync_cfg(void) {
 #endif
 void test_mailbox_task(void) {
 #if !POWER_SAVE_BUILD
+    /* 冷/热启动都清一次调试授权/覆盖: .data 在热复位后保留旧值, 残留 magic 会把设备锁在 TEST_MODE 绕过自动关机;
+       调试器在用户操作时会重新写入授权, 读取遥测不受影响 */
+    static bool auth_cleared_at_boot = false;
+    if (!auth_cleared_at_boot) {
+        auth_cleared_at_boot = true;
+        test_box_exit_test_mode();
+    }
+
     bool auth_ok = (g_test_box.magic == TEST_MAGIC && g_test_box.host_version == g_test_box.version);
 
             /* per-tick sync: skip when host wrote cfg_params (write-config race fix): */
@@ -49,6 +57,7 @@ void test_mailbox_task(void) {
     g_test_box.vbatt_raw_mv = g_vbatt_mv_raw;
     g_test_box.sys_state_mirror = sys_state;
     g_test_box.rst_cause = (uint8_t)g_rst_cause;
+    g_test_box.sys_clk_khz = (SYSCTL->SOCLOCK.SYSOSCCFG & SYSCTL_SYSOSCCFG_FREQ_MASK) ? 4000u : 32000u;
     g_test_box.cfg_params = sys_memory.params;   /* 每 tick 同步, 让调试器实时显示挡位/ALS偏移变化 */
     g_test_box.current_level = sys_memory.params & 0xFF;
     g_test_box.current_brt_val = g_current_brt; 
@@ -85,6 +94,8 @@ void test_mailbox_task(void) {
     if (auth_ok && sys_state != SYS_TEST_MODE && sys_state != SYS_OFF) {
         test_mode_active = true;
         sys_state = SYS_TEST_MODE;
+        g_inactivity_sec = 0;   /* 进入调试态视为用户在场, 重新计时 */
+        g_is_dimmed = false;
         opt3001_init();
         g_test_box.cfg_params = sys_memory.params;
         g_test_box.cfg_features = sys_memory.features;
@@ -110,6 +121,8 @@ void test_mailbox_task(void) {
     }
 
     if (sys_state == SYS_TEST_MODE && g_test_box.cmd != 0) {
+        g_inactivity_sec = 0;   /* 主机下发命令视为用户在场 */
+        g_is_dimmed = false;
         uint32_t c = g_test_box.cmd;
         g_test_box.status = TEST_ST_BUSY;
         g_test_box.cmd = 0;
@@ -149,7 +162,10 @@ void test_mailbox_task(void) {
                     sys_state = SYS_RUN;
                     g_inactivity_sec = 0;
                     g_is_dimmed = false;
+                    g_test_box.boot_refuse_reason = BOOT_REFUSE_NONE;
                     mode_init();
+                } else {
+                    g_test_box.boot_refuse_reason = BOOT_REFUSE_VOLT;
                 }
             } else {
                 sys_state = SYS_RUN;   /* 已在运行/测试态: 直接保持运行 */
@@ -201,3 +217,24 @@ void test_mailbox_task(void) {
     }
 #endif
 }
+
+#if !POWER_SAVE_BUILD
+/* 强制退出测试态: 清授权/覆盖/本地标志, 防止残留 magic 复活 TEST_MODE */
+void test_box_exit_test_mode(void) {
+    test_mode_active = false;
+    g_test_box.magic = 0;
+    g_test_box.host_version = 0;
+    g_test_box.cmd = 0;
+    g_test_box.cmd_ack = 0;
+    g_test_box.ovr_led_mode = 0;
+    g_test_box.ovr_key_minus = 0;
+    g_test_box.ovr_key_plus = 0;
+    g_test_box.ovr_als_en = 0;
+    g_test_box.ovr_block_phys_keys = 0;
+    g_test_box.ovr_brt_val = 0;
+    g_test_box.ovr_pwm_val = 0;
+    g_test_box.ovr_als_lux = 0;
+}
+#else
+void test_box_exit_test_mode(void) {}
+#endif

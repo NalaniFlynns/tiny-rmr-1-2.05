@@ -13,6 +13,13 @@ ORDERED_OBJS += \
 "./empty_mspm0c1104.o" \
 "./syscfg/ti_msp_dl_config.o" \
 "./startup_mspm0c110x_ticlang.o" \
+"./hal_keys.o" \
+"./hal_opt3001.o" \
+"./nvm_flash.o" \
+"./sys_battery.o" \
+"./sys_led_pwm.o" \
+"./sys_mode.o" \
+"./test_mailbox.o" \
 "../device_linker.cmd" \
 $(GEN_CMDS__FLAG) \
 -Wl,-ldevice.cmd.genlibs \
@@ -136,21 +143,21 @@ all: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
 # Tool invocations
 RMR.out: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
 	@echo 'Arm Linker - building target: "$@"'
-	"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/bin/tiarmclang.exe" @"syscfg/device.opt"  -march=thumbv6m -mcpu=cortex-m0plus -mfloat-abi=soft -mlittle-endian -mthumb -O2 -gdwarf-3 -Wl,-m"RMR.map" -Wl,-i"C:/ti/mspm0_sdk_2_11_00_07/source" -Wl,-i"C:/Users/Nalani/workspace_v12/RMR/Debug/syscfg" -Wl,-i"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/lib" -Wl,--diag_wrap=off -Wl,--display_error_number -Wl,--warn_sections -Wl,--xml_link_info="RMR_linkInfo.xml" -Wl,--rom_model -o "RMR.out" $(ORDERED_OBJS)
+	"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/bin/tiarmclang.exe" @"syscfg/device.opt"  -march=thumbv6m -mcpu=cortex-m0plus -mfloat-abi=soft -mlittle-endian -mthumb -Oz -gdwarf-3 -Wl,-m"RMR.map" -Wl,-i"C:/ti/mspm0_sdk_2_11_00_07/source" -Wl,-i"C:/Users/Nalani/workspace_v12/RMR/Debug/syscfg" -Wl,-i"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/lib" -Wl,--diag_wrap=off -Wl,--display_error_number -Wl,--warn_sections -Wl,--xml_link_info="RMR_linkInfo.xml" -Wl,--rom_model -o "RMR.out" $(ORDERED_OBJS)
 	@echo 'Finished building target: "$@"'
 	@echo ' '
 
 RMR.hex: $(EXE_OUTPUTS)
-	@echo 'Arm Hex Utility - building secondary target: "$@"'
-	"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/bin/tiarmhex.exe" --diag_wrap=off --intel -o "RMR.hex" $(EXE_OUTPUTS__QUOTED)
+	@echo 'Arm Objcopy Utility - building secondary target: "$@"'
+	"C:/ti/ti_cgt_arm_llvm_4.0.2.LTS/bin/tiarmobjcopy.exe" --output-target=ihex $(EXE_OUTPUTS__QUOTED) "RMR.hex"
 	@echo 'Finished building secondary target: "$@"'
 	@echo ' '
 
 # Other Targets
 clean:
 	-$(RM) $(GEN_MISC_FILES__QUOTED)$(BIN_OUTPUTS__QUOTED)$(GEN_FILES__QUOTED)$(EXE_OUTPUTS__QUOTED)
-	-$(RM) "empty_mspm0c1104.o" "syscfg\ti_msp_dl_config.o" "startup_mspm0c110x_ticlang.o" 
-	-$(RM) "empty_mspm0c1104.d" "syscfg\ti_msp_dl_config.d" "startup_mspm0c110x_ticlang.d" 
+	-$(RM) "empty_mspm0c1104.o" "syscfg\ti_msp_dl_config.o" "startup_mspm0c110x_ticlang.o" "hal_keys.o" "hal_opt3001.o" "nvm_flash.o" "sys_battery.o" "sys_led_pwm.o" "sys_mode.o" "test_mailbox.o" 
+	-$(RM) "empty_mspm0c1104.d" "syscfg\ti_msp_dl_config.d" "startup_mspm0c110x_ticlang.d" "hal_keys.d" "hal_opt3001.d" "nvm_flash.d" "sys_battery.d" "sys_led_pwm.d" "sys_mode.d" "test_mailbox.d" 
 	-$(RMDIR) $(GEN_MISC_DIRS__QUOTED)
 	-@echo ' '
 

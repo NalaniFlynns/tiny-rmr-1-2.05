@@ -4,7 +4,11 @@
 
 ---
 
-## 更新记录：2026-08-14，掉电保存时序优化 + 调试信箱镜像冻结修复 + 说明书重构
+## 更新记录：2026-08-15，固件 V4.3.4：修复上电自动开机失效 + STANDBY1 按键无法开机（唤醒加固）
+- **修复 1（上电自动开机失效，根因）**：V4.3.3 的 NVM off-intent 哨兵（eserved[0]=0x5A）用 (cold_boot || !g_off_intent) && !nvm_off_intent_get() 把**冷启动也拦截**——正常断电再上电时 SRAM 丢失但 NVM 哨兵仍在 → 永不自动开机。修复为 cold_boot || (!g_off_intent && !nvm_off_intent_get())：真实上电永远放行 AUTO_POWER_ON（启动成功即清哨兵），仅热复位（WWDT/调试器）带 off-intent 时保持关机
+- **修复 2（STANDBY1 按键无法开机，唤醒加固）**：原深睡只依赖 WUEN/WCOMP + GPIO 边沿唤醒，历史概率性失效导致按键无响应。数据手册确认 STANDBY1 下 TIMG14 由 32k LFCLK 驱动且 PD0 中断可唤醒——改为**不停 TIMG14、不屏蔽其中断**，LOAD=24000 → ~750ms 周期中断唤醒轮询按键（STANDBY_TIMG14_LOAD_32K），WUEN 保留即时唤醒；周期唤醒无按键时**跳过 battery_resume 省电**，按键唤醒才重测电压；唤醒后显式 sysclk_set_freq(false) 恢复关机态 4MHz/1ms tick
+- **调试信箱尾部扩展（V4.3.4+，0xB8 起）**：追加 sys_clk_khz（SYSOSCCFG.FREQ → 32000/4000）与 oot_refuse_reason（0=OK / 1=测压门拒绝 / 2=off-intent 保持关机 / 3=自动开机未使能）；RMRDebugger 新增 "Sys Clk / Boot Refuse" 遥测显示（旧固件自动显示 "-"）
+- **产物**：六变体 hex 全部重建（DIRECT/BATT/ECO_D/ECO_B/DBG/DBGL，V4.3.4），发布镜像 firmware/RMR.hex（V4.3.4_DIRECT）；RMRDebugger 重新编译（rmrdebuger.exe）并更新内置 w/ 烧录固件
 - **掉电保存优化（empty_mspm0c1104.c）**：快速掉电（单次原始电压 < 2000mV 即触发，不再等 3 次采样）→ **瞬间断开 PWM**（直接写 0% 占空比 + 停计数器，LED 停止耗电让电压回升稳定）→ **立即强制保存** NVM → SHUTDOWN（调试版仅保存保 SWD）；缓慢掉电/关机路径（LVP_EXT/LVP_CRIT 连续 5 次采样确认）保持不变——关机才多次采样
 - **cfg_params 镜像冻结修复（test_mailbox.c）**：`test_box_sync_cfg()` 同步后未更新 `last_synced_params` 守卫值，导致写配置/模式切换后调试器显示 `cfg_params` 永久冻结为旧值；实机验证（sys_memory.params 0x00020104 vs 镜像 0x00020004）确认并修复
 - **说明书重构（docs/RMR_说明书.md）**：前半部分改为**用户手册**——对象用户与阅读指引、快速上手、完整操作手册（开机关机/亮度/模式切换/FLASH）、指示灯速查、机制介绍（低电量/严重低电量/断电保护/测压门控/自动关机/ALS 故障）、12 条常见问题 QA；技术细节（算法/NVM/调试接口/编译烧录）后置
@@ -103,7 +107,7 @@
 
 基于 **TI MSPM0C1104**（Cortex-M0+）的低功耗智能照明/测试设备完整项目，包含：
 
-- `firmware/RMR` — 设备固件（CCS 21 工程，tiarmclang，当前版本 **V4.3.3_DIRECT / V4.3.3_BATT**）
+- `firmware/RMR` — 设备固件（CCS 21 工程，tiarmclang，当前版本 **V4.3.4_DIRECT / V4.3.4_BATT**）
 - `firmware/RMRDebugger` — 上位机调试器（Qt 6.11 + MinGW，支持 XDS110 SWD）
 - `RMR_Factory_Tool_V2.0` — 已打包的出厂调试工具（含 Qt 运行库 / OpenOCD / USB 驱动）
 - `PCB` / `model` / `image` — 硬件、结构与渲染资料

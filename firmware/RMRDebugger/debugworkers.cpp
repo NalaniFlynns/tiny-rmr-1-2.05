@@ -224,8 +224,8 @@ QString BaseWorker::readFwVersionGeneric() {
     return ver;
 }
 void BaseWorker::pollTelemetryGeneric() {
-    uint8_t data[0xB8] = {0};
-    readBlock(0, 0xB8, data); QVariantMap map;
+    uint8_t data[0xC0] = {0};
+    readBlock(0, 0xC0, data); QVariantMap map;
     map["magic"] = *(uint32_t*)(data + OFS_MAGIC);
     map["cmd"] = *(uint32_t*)(data + OFS_CMD);
     map["cmd_ack"] = *(uint32_t*)(data + OFS_CMD_ACK);
@@ -272,6 +272,8 @@ void BaseWorker::pollTelemetryGeneric() {
     map["cfg_params"] = *(uint32_t*)(data + OFS_CFG_PARAMS);
     map["cfg_features"] = *(uint32_t*)(data + OFS_CFG_FEATURES);
     map["fw_ver"] = QString::fromUtf8((const char*)(data + OFS_FW_VER_STR)).trimmed();
+    map["sys_clk"] = *(uint32_t*)(data + OFS_SYS_CLK_KHZ);
+    map["boot_refuse"] = *(uint32_t*)(data + OFS_BOOT_REFUSE);
     emit sigTelemetry(probeSN, map);
 }
 JLinkWorker::JLinkWorker(uint32_t sn, QObject *parent) : BaseWorker(sn, ProbeType::JLINK, parent) {}

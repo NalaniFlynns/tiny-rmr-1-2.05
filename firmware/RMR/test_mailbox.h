@@ -1,4 +1,4 @@
-﻿#ifndef TEST_MAILBOX_H_
+#ifndef TEST_MAILBOX_H_
 #define TEST_MAILBOX_H_
 #include <stdint.h>
 
@@ -86,9 +86,19 @@ typedef struct {
     char     fw_version_str[16];
     uint32_t vbatt_raw_mv;      /* 原始 ADC 电压(未滤波), 0xB0 */
     uint32_t est_hw_power_uw;   /* hw power (batt side) = vbatt_raw x i_avg, 0xB4 */
+    uint32_t sys_clk_khz;       /* SYSOSCCFG.FREQ: 0=SYSOSC base 32M/1=4M, 上报 32000/4000, 0xB8 */
+    uint32_t boot_refuse_reason;/* 最近一次开机被拒绝的原因, 0xBC */
 } Test_Mailbox_t;
+
+/* boot_refuse_reason 取值 */
+#define BOOT_REFUSE_NONE        0   /* 无拒绝/最近一次开机成功 */
+#define BOOT_REFUSE_VOLT        1   /* 测压门未达标: V <= lvp_ext + 100mV */
+#define BOOT_REFUSE_OFF_INTENT  2   /* 热复位且 off-intent: 保持关机(仅影响自动开机, 可按键开机) */
+#define BOOT_REFUSE_AUTO_FLAG   3   /* FLAG_AUTO_POWER_ON 未使能(仍可按键开机) */
 
 extern volatile Test_Mailbox_t g_test_box;
 void test_mailbox_task(void);
+/* 强制退出测试态: 清除授权/覆盖/本地标志, 用于自动关机等路径 */
+void test_box_exit_test_mode(void);
 
 #endif

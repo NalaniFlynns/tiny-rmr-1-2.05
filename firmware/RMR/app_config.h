@@ -14,15 +14,15 @@
 #endif
 /* 省电版(ECO): 1=关闭一切非必要开销(生产电池供电):
    WFI 睡眠替代 24MHz 忙等 / 关闭调试箱每 tick 实时刷新 / ADC+VREF 采样间隙断电 /
-   OPT3001 手动模式与 OFF 态 shutdown / ALS 与 ADC 轮询降频 / 出厂默认 OFF 态进 STANDBY0 深睡 */
+   OPT3001 手动模式与 OFF 态 shutdown / ALS 与 ADC 轮询降频 / 出厂默认 OFF 态进 STANDBY1 深睡 */
 #ifndef POWER_SAVE_BUILD
 #define POWER_SAVE_BUILD 0
 #endif
-/* 调试版: 1=测试板直供调试专用, 全程 SWD 可访问(不进 STANDBY0 深睡/不执行掉电 SHUTDOWN), 其余特性(ECO 降频/NVM 等)不变 */
+/* 调试版: 1=测试板直供调试专用, 全程 SWD 可访问(不进 STANDBY1 深睡/不执行掉电 SHUTDOWN), 其余特性(ECO 降频/NVM 等)不变 */
 #ifndef DEBUG_BUILD
 #define DEBUG_BUILD 0
 #endif
-/* 低功耗调试版: 1=OFF 态进 WFI/STANDBY0 彻底低功耗(忽略 NVM SWD 位, SWD 自然断开), 开机/运行态 SWD 保持, 其余特性不变 */
+/* 低功耗调试版: 1=OFF 态进 WFI/STANDBY1 彻底低功耗(忽略 NVM SWD 位, SWD 自然断开), 开机/运行态 SWD 保持, 其余特性不变 */
 #ifndef DEBUG_LP_BUILD
 #define DEBUG_LP_BUILD 1
 #endif
@@ -31,25 +31,25 @@
 #define BATT_SR516SW_SINGLE_R_MOHM  25000
 
 #if DEBUG_BUILD
-#define FW_VERSION_STR "V4.3.3_DBG"
+#define FW_VERSION_STR "V4.3.4_DBG"
 #define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
 #elif DEBUG_LP_BUILD
-#define FW_VERSION_STR "V4.3.3_DBGL"
+#define FW_VERSION_STR "V4.3.4_DBGL"
 #define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
 #elif POWER_SAVE_BUILD
 #if POWER_SOURCE_DIRECT
-#define FW_VERSION_STR "V4.3.3_ECO_D"
+#define FW_VERSION_STR "V4.3.4_ECO_D"
 #define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
 #else
-#define FW_VERSION_STR "V4.3.3_ECO_B"
+#define FW_VERSION_STR "V4.3.4_ECO_B"
 #define CFG_DEFAULT_R_SERIES_MOHM   (HW_SERIES_R_MOHM + 2 * BATT_SR516SW_SINGLE_R_MOHM)
 #endif
 #else
 #if POWER_SOURCE_DIRECT
-#define FW_VERSION_STR "V4.3.3_DIRECT"
+#define FW_VERSION_STR "V4.3.4_DIRECT"
 #define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
 #else
-#define FW_VERSION_STR "V4.3.3_BATT"
+#define FW_VERSION_STR "V4.3.4_BATT"
 #define CFG_DEFAULT_R_SERIES_MOHM   (HW_SERIES_R_MOHM + 2 * BATT_SR516SW_SINGLE_R_MOHM)
 #endif
 #endif
@@ -104,10 +104,10 @@
 /* 调试版: 出厂默认 OFF 态保持 SWD 可访问(与代码级 SWD 保活一致) */
 #define DEFAULT_FEATURE_FLAGS (FEATURE_RUNTIME_MASK | FLAG_SWD_IN_OFF_STATE)
 #elif DEBUG_LP_BUILD
-/* 浣庡姛鑰?璋冭瘯鐗? 鍑哄巶榛樿?娓?SWD 浣?-> OFF 鎬佽繘 WFI/STANDBY0 娣辩潯(鏈€鐪佺數, SWD 鏂紑鍙帴鍙? */
+/* 浣庡姛鑰?璋冭瘯鐗? 鍑哄巶榛樿?娓?SWD 浣?-> OFF 鎬佽繘 WFI/STANDBY1 娣辩潯(鏈€鐪佺數, SWD 鏂紑鍙帴鍙? */
 #define DEFAULT_FEATURE_FLAGS (FEATURE_RUNTIME_MASK & ~FLAG_SWD_IN_OFF_STATE)
 #elif POWER_SAVE_BUILD
-/* 省电版: 出厂默认清 SWD 保活位 -> OFF 态进 STANDBY0 深睡(µA 级), 代价是 OFF 态 SWD 不可访问 */
+/* 省电版: 出厂默认清 SWD 保活位 -> OFF 态进 STANDBY1 深睡(µA 级), 代价是 OFF 态 SWD 不可访问 */
 #define DEFAULT_FEATURE_FLAGS (FEATURE_RUNTIME_MASK & ~FLAG_SWD_IN_OFF_STATE)
 #else
 #define DEFAULT_FEATURE_FLAGS (FEATURE_RUNTIME_MASK)
@@ -136,6 +136,7 @@
 #define FLASH_SECTOR_SIZE       1024
 #define NVM_SLOT_SIZE           64
 #define NVM_MAGIC               0xAA55AA5C 
+#define NVM_OFF_INTENT_MARK      0x5A      /* reserved[0] shutdown intent sentinel: 0x5A=off, 0x00=running */
 #define EN_AUTO_SAVE            1
 #define FLASH_ERASE_TIME_MS     32
 #define FLASH_PROG_TIME_MS      2
@@ -145,6 +146,10 @@
 #define TIME_NVM_AUTO_SAVE_DELAY_MS     30000
 #define TIME_NVM_FORCE_SAVE_MS          600000
 #define TIME_FLASH_MODE_TIMEOUT_MS      300000
+
+/* STANDBY1 周期唤醒: STANDBY1 下 TIMG14 由 32k LFCLK 驱动(LFCLK to TIMG14/TIMG8 = 32k),
+   LOAD=24000 -> 24001/32000 ~= 750ms 零事件中断, 作为 WUEN/GPIO 之外的兜底按键轮询唤醒源 */
+#define STANDBY_TIMG14_LOAD_32K  24000u
 
 /* ==================== [5] 物理模型参数 ==================== */
 #define PWM_REG_MAX             2399 
