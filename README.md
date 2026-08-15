@@ -4,6 +4,15 @@
 
 ---
 
+## 更新记录：2026-08-15（晚），固件 V4.3.5：量产版默认禁 SWD/NRST（仅 FLASH_MODE 开放）+ STANDBY1 移除周期轮询唤醒
+- **量产版默认禁 SWD + NRST（FEATURE_PROD_SWD_DISABLE，仅 DIRECT/BATT/ECO_D/ECO_B 量产构建生效）**：正常运行时写 SWDCFG/EXRSTPIN 一次性禁用（**仅 POR 可恢复**），SWD/调试口在量产固件中默认关闭；**FLASH_MODE 是唯一调试通道**——每次复位（POR/热复位）后 5 秒 boot 窗口内 BT1 短按 0.8s 进入 FLASH_MODE（任意运行态，含自动开机后的 RUN），窗口内 SWD/NRST 全程开放；窗口结束且不在 FLASH_MODE 即禁用，之后需**重新上电**才能再连。FLASH_MODE 会话内从不禁用，保证烧录通道；退出后由窗口判定补禁。DBG/DBGL 调试版不启用该特性，调试期 SWD 全程可连
+- **重新烧录量产固件的操作**：断电 → 重新上电 → **5 秒内短按 BT1（0.8s）** 进 FLASH_MODE（LED 闪两下）→ RMRDebugger 连接烧录；烧录完成复位后如需再次烧录，重复断电上电即可
+- **STANDBY1 移除 750ms 周期轮询（省电）**：实测 WUEN/WCOMP + GPIO 边沿唤醒可靠无失败（历史"概率失败"根因是 standby 入口被 WWDT 违规复位/残留标志破坏，V4.3.4 已修复），移除 TIMG14 32k 周期轮询——深睡前停 TIMG14 表，唤醒后重启 1ms tick；消除每 ~750ms 一次的 ~20uA 电流尖峰，standby 电流恒定 <1uA
+- **自动关机时长修正**：40min 无操作调暗 + **50min 延迟关机**（TIME_AUTO_SHUTDOWN_S 600→3000，总 90min）
+- **省电版（ECO）FLASH_MODE 最小遥测**：POWER_SAVE_BUILD 常态不刷 mailbox 省电，进 FLASH_MODE 后刷最小遥测（VBATT/状态/PWM/standby 计数等）供 RMRDebugger 显示
+- **验证**：六变体全部重建（V4.3.5_DBG/DBGL/DIRECT/BATT/ECO_D/ECO_B，0 错误 0 警告）；hex 体检确认 SWDCFG(0x62000001)/EXRSTPIN(0x1E000001) 写序列仅在量产 hex 出现；发布镜像 firmware/RMR.hex = V4.3.5_DIRECT；RMRDebugger 内置 fw/ 同步更新（BATT/DBGL/DIRECT/ECO_D/ECO_B）
+- **注意**：量产固件烧录后 SWD 默认关闭属预期；RMRDebugger 在烧录完成复位后若连接在 5s 窗口外断开，属正常行为，重新上电+FLASH_MODE 即可恢复
+
 ## 更新记录：2026-08-15（下午），固件 V4.3.4 补丁：修复计时快 6 倍（1.5s 一按就亮/5s 不满）+ 关机不进 STANDBY1
 - **修复 1（计时快 ~6 倍，根因）**：MSPM0C110x 的 SYSOSC **实际只能运行在 24MHz**——写 SYSOSCCFG.FREQ=1（4M）寄存器生效但硅片仍以 24MHz 跑，而代码又按 4M 把 TIMG14 LOAD 设成 4000，导致 g_tick_ms 变成 167us/tick。所有基于 tick 的计时（双键 1.5s 开机/关机、5s 模式切换、LVP/ALS 时延）被压缩约 6 倍：表现为"一按就亮、5s 也不满"。修复：`sysclk_set_freq()` 恒定 24MHz、LOAD 恒为 24000-1，g_tick_ms 恒为真 1ms（实测 2036 tick/2s 墙钟）；OFF 态短暂运行不降频（STANDBY1 深睡停机才是 uA 级功耗来源）
 - **修复 2（关机后不进 STANDBY1）**：关机路径 `g_off_pending` 在 5s 事件/异常松开后残留为 1，把深睡分支 `!g_off_pending` 卡死 → PMODECFG 恒 0、SWD 不断开。修复：OFF 态深睡前自愈——`g_off_pending && key_is_idle()` 则清零；同时 hal_keys 在干净松开（双键均释放且上一拍非双键）时复位 both_released/both_handled_1_5s/both_handled_5s/both_release_handled/both_down_tick，防止残留导致下一次双按瞬间判定超时长按

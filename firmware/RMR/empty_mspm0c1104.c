@@ -32,6 +32,35 @@ bool g_flash_mode_used __attribute__((section(".noinit")));
 bool g_off_intent __attribute__((section(".noinit")));
 #endif
 
+#if FEATURE_PROD_SWD_DISABLE
+static bool prod_swd_disabled = false;   /* 本电源会话是否已禁用 SWD/NRST(热复位后重新走 boot 窗口) */
+static void prod_disable_swd_nrst(void) {
+    if (prod_swd_disabled) return;
+    prod_swd_disabled = true;
+    DL_SYSCTL_disableSWD();       /* 禁用后仅 POR 可恢复: 量产正常态 SWD 不可连 */
+    DL_SYSCTL_disableNRSTPin();   /* NRST 复位功能一并禁用(该引脚未使用) */
+}
+#endif
+static uint32_t flash_mode_tick = 0;
+/* 进入 FLASH_MODE(唯一量产调试通道): 测压达标才进; 量产版仅 boot 窗口内有效(窗口外 SWD 已禁用) */
+static void try_enter_flash_mode(void) {
+#if FEATURE_PROD_SWD_DISABLE
+    if (g_tick_ms >= PROD_SWD_BOOT_WINDOW_MS) return;   /* 窗口外进 FLASH_MODE 无意义(SWD 已禁) */
+#endif
+    if (g_vbatt_mv_filtered >= sys_memory.lvp_ext) {   /* 测压达标才进入 Flash 模式 */
+        g_flash_mode_used = true;
+        flash_mode_tick = g_tick_ms;   /* 起始 tick(差值比较防回绕) */
+        sys_state = SYS_FLASH_MODE;
+        led_blink_twice();
+#if FEATURE_RESTORE_NRST_IN_FLASH
+        DL_GPIO_setPins(PORT_OUTPUT, PIN_VCC_EN);
+        delay_cycles(CPU_CYCLES_PER_MS);
+#endif
+    } else {
+        g_test_box.boot_refuse_reason = BOOT_REFUSE_VOLT;
+    }
+}
+
 volatile uint32_t g_tick_ms = 0;
 volatile uint32_t g_rst_cause = 0;   /* SYSCTL RSTCAUSE ID, captured once at boot (read-to-clear) */
 
@@ -177,7 +206,6 @@ int main(void) {
     sys_state = SYS_OFF;
     static uint8_t lvp_ext_cnt = 0;
     static uint8_t lvp_crit_cnt = 0;
-    static uint32_t flash_mode_tick = 0;
     static bool g_off_pending = false;   /* 1.5s ?????????, ???? standby */
     static bool g_stby_session = false;  /* 本次 OFF 会话是否已进入过 STANDBY1 */
 
@@ -233,6 +261,19 @@ int main(void) {
         KeyEvent_t key = keys_task();
         battery_task();
         test_mailbox_task(); 
+#if FEATURE_PROD_SWD_DISABLE
+        /* 量产 SWD 门控: 每次复位后前 PROD_SWD_BOOT_WINDOW_MS 保持 SWD/NRST 开放,
+           窗口内 BT1 0.8s 短按即进 FLASH_MODE(任意运行态); 窗口结束且不在 FLASH_MODE
+           一次性禁用 SWD+NRST(仅 POR 恢复). FLASH_MODE 会话内从不禁用, 保证烧录通道;
+           退出 FLASH_MODE(1.5s 开机/超时复位)后由窗口过期判定补禁. */
+        if (g_tick_ms < PROD_SWD_BOOT_WINDOW_MS) {
+            if (key == EVT_BT1_SHORT_0_8S && !g_flash_mode_used && sys_state != SYS_FLASH_MODE) {
+                try_enter_flash_mode();
+            }
+        } else if (!prod_swd_disabled && sys_state != SYS_FLASH_MODE) {
+            prod_disable_swd_nrst();
+        }
+#endif
         
 #if !POWER_SAVE_BUILD
         if (g_tick_ms % 100 == 0) update_debug_string();
@@ -316,18 +357,7 @@ int main(void) {
 #endif
             
             if (key == EVT_BT1_SHORT_0_8S && !g_flash_mode_used) {
-                if (g_vbatt_mv_filtered >= sys_memory.lvp_ext) {   /* 测压达标才进入 Flash 模式 */
-                    g_flash_mode_used = true;
-                    flash_mode_tick = g_tick_ms;   /* 起始 tick(差值比较防回绕) */
-                    sys_state = SYS_FLASH_MODE;
-                    led_blink_twice(); 
-#if FEATURE_RESTORE_NRST_IN_FLASH
-                    DL_GPIO_setPins(PORT_OUTPUT, PIN_VCC_EN);
-                    delay_cycles(CPU_CYCLES_PER_MS);
-#endif
-                } else {
-                    g_test_box.boot_refuse_reason = BOOT_REFUSE_VOLT;
-                }
+                try_enter_flash_mode();
             }
             else if (key == EVT_BOTH_LONG_1_5S) {
                 if (battery_startup_check()) {   /* 测压达标才启动 */
@@ -388,6 +418,8 @@ int main(void) {
             if (sys_state == SYS_OFF && !g_off_pending && key_is_idle()
 #if DEBUG_LP_BUILD
                ) {   /* LP debug: force OFF deep sleep (WFI+STANDBY1), SWD may drop */
+#elif FEATURE_PROD_SWD_DISABLE
+               ) {   /* 量产: SWD 已禁用, OFF 一律深睡(忽略运行时 SWD 保活位) */
 #else
                && !(sys_memory.features & FLAG_SWD_IN_OFF_STATE)) {
 #endif
@@ -435,17 +467,23 @@ int main(void) {
                         g_stby_session = true;
                         g_test_box.standby_entry_cnt++;
                     }
-                    /* 周期唤醒加固(修复"按键无法开机"): STANDBY1 下 TIMG14 由 32k
-                       LFCLK 驱动(数据手册 Table 8-1: LFCLK to TIMG14/TIMG8 = 32k,
-                       Wake Sources = PD0 IRQ), 因此不停表、不屏蔽其中断, 仅把 LOAD
-                       改为 24000 -> 24001/32000 ~= 750ms 零事件中断, 周期性唤醒轮询
-                       按键, 作为 WUEN/GPIO 即时唤醒之外的兜底(历史 WUEN 概率性失效
-                       导致设备深睡后按键无响应). 唤醒后由 sysclk_set_freq(false)
-                       恢复 24MHz + 1ms LOAD. */
-                    NVIC_EnableIRQ(TIMG14_INT_IRQn);
-                    DL_TimerG_setLoadValue(TIMG14, STANDBY_TIMG14_LOAD_32K);
+#if FEATURE_PROD_SWD_DISABLE
+                    /* 量产: 若开机失败直接深睡而窗口在睡眠中过期, 进深睡前补禁
+                       SWD/NRST(避免长时间带 SWD 入睡; 禁用对 STANDBY1 无副作用) */
+                    if (!prod_swd_disabled && g_tick_ms >= PROD_SWD_BOOT_WINDOW_MS) {
+                        prod_disable_swd_nrst();
+                    }
+#endif
+                    /* 唤醒源: 仅 WUEN/WCOMP 异步 IO 电平比较 + GPIO 边沿中断(实测可靠).
+                       曾加 TIMG14 32k 周期轮询(LOAD=24000, ~750ms)兜底, 实测 WUEN 唤醒
+                       无失败(历史"概率失败"实为 standby 入口被 WWDT 违规复位/残留标志
+                       破坏所致, 已修复), 且周期唤醒每 750ms 产生 ~20uA 短尖峰,
+                       量产省电移除: 深睡前停 TIMG14 表, 唤醒后由 sysclk_set_freq(false)
+                       以 24MHz LOAD 重启 1ms tick. */
+                    DL_TimerG_stopCounter(TIMG14);   /* 停表: 无周期中断即无周期唤醒 */
+                    NVIC_ClearPendingIRQ(TIMG14_INT_IRQn);
                     DL_SYSCTL_setPowerPolicySTANDBY1();
-                    __WFI();   /* IRQ 保持使能: TIMG14 周期中断即唤醒源, 不能 PRIMASK 屏蔽 */
+                    __WFI();   /* WUEN/GPIO 为唤醒源, 不能 PRIMASK 屏蔽 */
                     DL_SYSCTL_setPowerPolicyRUN0SLEEP0();
                     sysclk_set_freq(false);   /* 显式恢复 24MHz + 1ms tick */
                 } else

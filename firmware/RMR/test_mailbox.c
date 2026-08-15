@@ -36,7 +36,24 @@ static void test_box_sync_cfg(void) {
 }
 #endif
 void test_mailbox_task(void) {
-#if !POWER_SAVE_BUILD
+#if POWER_SAVE_BUILD
+    /* 省电版: 常态不刷 mailbox 省电; FLASH_MODE 是量产唯一调试通道, 刷最小遥测供 RMRDebugger 显示 */
+    if (sys_state == SYS_FLASH_MODE) {
+        g_test_box.vbatt_mv = g_vbatt_mv_filtered;
+        g_test_box.vbatt_raw_mv = g_vbatt_mv_raw;
+        g_test_box.sys_state_mirror = sys_state;
+        g_test_box.rst_cause = (uint8_t)g_rst_cause;
+        g_test_box.sys_clk_khz = 24000u;
+        g_test_box.current_level = sys_memory.params & 0xFF;
+        g_test_box.current_brt_val = g_current_brt;
+        g_test_box.current_pwm_val = g_last_applied_pwm;
+        g_test_box.state_inactivity_sec = g_inactivity_sec;
+        g_test_box.nvm_is_dirty = nvm_is_dirty() ? 1 : 0;
+        g_test_box.nvm_save_fail_cnt = nvm_get_save_fail_cnt();
+        g_test_box.raw_key_minus = ((DL_GPIO_readPins(PORT_BTN, PIN_BT1) & PIN_BT1) == 0) ? 1 : 0;
+        g_test_box.raw_key_plus  = ((DL_GPIO_readPins(PORT_BTN, PIN_BT2) & PIN_BT2) == 0) ? 1 : 0;
+    }
+#else
     /* 冷/热启动都清一次调试授权/覆盖: .data 在热复位后保留旧值, 残留 magic 会把设备锁在 TEST_MODE 绕过自动关机;
        调试器在用户操作时会重新写入授权, 读取遥测不受影响 */
     static bool auth_cleared_at_boot = false;

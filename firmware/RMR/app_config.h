@@ -27,29 +27,42 @@
 #define DEBUG_LP_BUILD 1
 #endif
 
+/* 量产正式版: 默认禁用 SWD + NRST(寄存器写后仅 POR 可恢复).
+   每次复位后 PROD_SWD_BOOT_WINDOW_MS 窗口内保持 SWD/NRST 开放, 供 BT1 0.8s 进 FLASH_MODE 烧录;
+   窗口结束且不在 FLASH_MODE 即一次性禁用, 之后只有重新上电才能再连 SWD.
+   DBG/DBGL 调试版不启用, 保证调试期 SWD 全程可连. */
+#if !DEBUG_BUILD && !DEBUG_LP_BUILD
+#ifndef FEATURE_PROD_SWD_DISABLE
+#define FEATURE_PROD_SWD_DISABLE 1
+#endif
+#else
+#define FEATURE_PROD_SWD_DISABLE 0
+#endif
+#define PROD_SWD_BOOT_WINDOW_MS     5000
+
 /* SR516SW 单节内阻(mΩ): 规格书未标注, 取氧化银纽扣电池典型值, 可经调试器写 NVM r_series 校准 */
 #define BATT_SR516SW_SINGLE_R_MOHM  25000
 
 #if DEBUG_BUILD
-#define FW_VERSION_STR "V4.3.4_DBG"
+#define FW_VERSION_STR "V4.3.5_DBG"
 #define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
 #elif DEBUG_LP_BUILD
-#define FW_VERSION_STR "V4.3.4_DBGL"
+#define FW_VERSION_STR "V4.3.5_DBGL"
 #define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
 #elif POWER_SAVE_BUILD
 #if POWER_SOURCE_DIRECT
-#define FW_VERSION_STR "V4.3.4_ECO_D"
+#define FW_VERSION_STR "V4.3.5_ECO_D"
 #define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
 #else
-#define FW_VERSION_STR "V4.3.4_ECO_B"
+#define FW_VERSION_STR "V4.3.5_ECO_B"
 #define CFG_DEFAULT_R_SERIES_MOHM   (HW_SERIES_R_MOHM + 2 * BATT_SR516SW_SINGLE_R_MOHM)
 #endif
 #else
 #if POWER_SOURCE_DIRECT
-#define FW_VERSION_STR "V4.3.4_DIRECT"
+#define FW_VERSION_STR "V4.3.5_DIRECT"
 #define CFG_DEFAULT_R_SERIES_MOHM   HW_SERIES_R_MOHM
 #else
-#define FW_VERSION_STR "V4.3.4_BATT"
+#define FW_VERSION_STR "V4.3.5_BATT"
 #define CFG_DEFAULT_R_SERIES_MOHM   (HW_SERIES_R_MOHM + 2 * BATT_SR516SW_SINGLE_R_MOHM)
 #endif
 #endif
@@ -110,7 +123,8 @@
 /* 省电版: 出厂默认清 SWD 保活位 -> OFF 态进 STANDBY1 深睡(µA 级), 代价是 OFF 态 SWD 不可访问 */
 #define DEFAULT_FEATURE_FLAGS (FEATURE_RUNTIME_MASK & ~FLAG_SWD_IN_OFF_STATE)
 #else
-#define DEFAULT_FEATURE_FLAGS (FEATURE_RUNTIME_MASK)
+/* 量产版: 清 SWD 保活位 -> OFF 态进 STANDBY1 深睡(即使编译为非省电版; SWD 由 FEATURE_PROD_SWD_DISABLE 统一门控) */
+#define DEFAULT_FEATURE_FLAGS (FEATURE_RUNTIME_MASK & ~FLAG_SWD_IN_OFF_STATE)
 #endif
 
 /* ==================== [3] 硬件引脚分配 ==================== */
@@ -147,9 +161,9 @@
 #define TIME_NVM_FORCE_SAVE_MS          600000
 #define TIME_FLASH_MODE_TIMEOUT_MS      300000
 
-/* STANDBY1 周期唤醒: STANDBY1 下 TIMG14 由 32k LFCLK 驱动(LFCLK to TIMG14/TIMG8 = 32k),
-   LOAD=24000 -> 24001/32000 ~= 750ms 零事件中断, 作为 WUEN/GPIO 之外的兜底按键轮询唤醒源 */
-#define STANDBY_TIMG14_LOAD_32K  24000u
+/* STANDBY1 唤醒: 仅 WUEN/WCOMP 异步 IO 电平比较 + GPIO 边沿中断(实测可靠).
+   曾加 TIMG14 32k 周期轮询(LOAD=24000, ~750ms)兜底, 每 750ms 产生 ~20uA 短尖峰;
+   实测 WUEN 唤醒无失败且重新上电可恢复, 量产省电移除: 深睡前停 TIMG14 表. */
 
 /* ==================== [5] 物理模型参数 ==================== */
 #define PWM_REG_MAX             2399 
@@ -221,7 +235,7 @@
 #define CFG_MAX_LEVELS          9
 #define SNAP_THRESHOLD_BRT      50
 #define TIME_AUTO_DIM_S         2400
-#define TIME_AUTO_SHUTDOWN_S    600
+#define TIME_AUTO_SHUTDOWN_S    3000   /* 40min 调暗后再无操作 50min 关机(总 90min) */
 #define DIM_LEVEL               5
 #define LVP_FLASH_PERIOD_MS     2000
 #define LVP_FLASH_ON_TIME_MS    50
