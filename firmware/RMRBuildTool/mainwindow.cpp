@@ -672,7 +672,7 @@ void MainWindow::onAuthChanged()
     if (!m_authStack) return;
     if (m_radFido->isChecked()) {
         m_authStack->setCurrentIndex(1);
-        m_lblAuthInfo->setText("需要插入支持 PRF / HMAC-Secret 的 FIDO2 安全密钥 (如 YubiKey 5、SoloKey)。"
+        m_lblAuthInfo->setText("插入支持 PRF / HMAC-Secret 的 FIDO2 安全密钥 (如 YubiKey 5)，触碰确认即可，无需 PIN。"
                                "加密时密钥从硬件内动态派生，全程不落盘。");
     } else if (m_radPasskey->isChecked()) {
         m_authStack->setCurrentIndex(1);

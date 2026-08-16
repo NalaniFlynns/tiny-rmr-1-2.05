@@ -159,9 +159,10 @@ bool webauthn_make_credential(void* parent_hwnd, const std::string& rp_id,
     opt.dwTimeoutMilliseconds = 60000;
     opt.dwAuthenticatorAttachment = attachment_for(device);
     opt.bRequireResidentKey = resident ? TRUE : FALSE;
+    /* 硬件密钥仅触碰即可(UV=DISCOURAGED, 不弹 PIN 设置); 平台通行证/Windows Hello 保持 REQUIRED */
     opt.dwUserVerificationRequirement = (device == 2)
         ? WEBAUTHN_USER_VERIFICATION_REQUIREMENT_REQUIRED
-        : WEBAUTHN_USER_VERIFICATION_REQUIREMENT_PREFERRED;
+        : WEBAUTHN_USER_VERIFICATION_REQUIREMENT_DISCOURAGED;
     opt.bEnablePrf = TRUE;
 
     PWEBAUTHN_CREDENTIAL_ATTESTATION att = nullptr;
@@ -207,9 +208,10 @@ bool webauthn_get_prf_secret(void* parent_hwnd, const std::string& rp_id,
     opt.dwVersion = WEBAUTHN_AUTHENTICATOR_GET_ASSERTION_OPTIONS_CURRENT_VERSION;
     opt.dwTimeoutMilliseconds = 60000;
     opt.dwAuthenticatorAttachment = attachment_for(device);
+    /* 硬件密钥: 触碰即可, 不要求 PIN/UV */
     opt.dwUserVerificationRequirement = (device == 2)
         ? WEBAUTHN_USER_VERIFICATION_REQUIREMENT_REQUIRED
-        : WEBAUTHN_USER_VERIFICATION_REQUIREMENT_PREFERRED;
+        : WEBAUTHN_USER_VERIFICATION_REQUIREMENT_DISCOURAGED;
     opt.dwFlags = WEBAUTHN_AUTHENTICATOR_HMAC_SECRET_VALUES_FLAG;
     opt.pAllowCredentialList = &credList;
     opt.pHmacSecretSaltValues = &saltValues;
