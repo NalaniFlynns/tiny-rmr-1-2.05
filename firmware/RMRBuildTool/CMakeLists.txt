@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
 
 add_subdirectory(../fwsec fwsec)
 
@@ -20,5 +20,5 @@ qt_add_executable(rmrbuildtool WIN32
     pwgen.cpp pwgen.h
 )
 
-target_link_libraries(rmrbuildtool PRIVATE fwsec Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(rmrbuildtool PRIVATE fwsec Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
 target_compile_definitions(rmrbuildtool PRIVATE _CRT_SECURE_NO_WARNINGS)

@@ -87,6 +87,7 @@ void BuildRunner::nextStep()
         else if (name == "ECO_B")   v = { "ECO_B", 0, 1, 0, 0 };
         else                        v = { "DBGL", 1, 0, 0, 1 };
         m_currentVariant = v.name;
+        m_step = 0;
         emit logLine(QString("===== 构建变体 %1 =====").arg(v.name), 1);
         emit progress(0, QString("变体 %1 / %2 ...").arg(m_resultHex.size() + 1).arg(m_allVariants ? 7 : 1));
         switchDefines(v);
@@ -95,6 +96,7 @@ void BuildRunner::nextStep()
     }
     if (!m_restorePhase) {
         m_restorePhase = true;
+        m_step = 0;
         emit logLine("===== 还原默认配置 (DBGL) 并重新构建 =====", 1);
         emit progress(85, "还原默认配置 ...");
         restoreDefines();
@@ -159,13 +161,19 @@ void BuildRunner::onGmakeFinished(int code, QProcess::ExitStatus st)
         return;
     }
     if (m_cancelled) { restoreDefines(); finish(false, "已停止"); return; }
+    /* 步骤机: 0=clean 1=all, 确保每个变体完整构建 */
+    if (m_step == 0) {
+        m_step = 1;
+        startGmake({ "all" });
+        return;
+    }
     QString hex = QDir(m_hexOutDir).filePath("RMR.hex");
     if (QFile::exists(hex)) {
         QString outHex = QDir(m_hexOutDir).filePath(QString("RMR_%1.hex").arg(m_currentVariant));
         if (m_currentVariant == "DBGL")
             QFile::remove(outHex);
         QFile::copy(hex, outHex);
-        m_resultHex << outHex;
+        if (!m_resultHex.contains(outHex)) m_resultHex << outHex;
         emit logLine(QString("OK: %1").arg(outHex), 1);
     }
     emit progress(m_allVariants ? int(10.0 * m_resultHex.size()) : 100,

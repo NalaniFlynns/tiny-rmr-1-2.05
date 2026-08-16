@@ -1,6 +1,10 @@
 #pragma once
 #include <QMainWindow>
 #include <QThread>
+#include <QList>
+#include <QHash>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <vector>
 #include "keystore.h"
 
@@ -12,14 +16,17 @@ class QProgressBar;
 class QLabel;
 class QRadioButton;
 class QStackedWidget;
+class QTcpServer;
+class QTcpSocket;
 class BuildRunner;
 class EncryptWorker;
+struct EncryptJob;
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    explicit MainWindow(const QString& initialDir = QString(), QWidget* parent = nullptr);
     ~MainWindow();
 
 private slots:
@@ -49,6 +56,21 @@ private:
     void applyStyle();
     void appendLog(const QString& text, int kind);
     QString pickGmake();
+
+    /* ---- FWSEC1 加密流程拆分: UI 组装任务 / 执行任务, 供 IPC 复用 ---- */
+    bool buildEncryptJobFromUi(EncryptJob& job, QString& err);
+    void runEncrypt(const EncryptJob& job);
+
+    /* ---- 本地 IPC 调试接口 (127.0.0.1:17346, JSON 行协议, 与 RMRDebugger 同构) ---- */
+    void setupIpc();
+    void ipcSend(QTcpSocket* s, const QJsonObject& obj);
+    void ipcBroadcast(const QJsonObject& obj);
+    void ipcSendHello(QTcpSocket* s);
+    void handleIpcRead(QTcpSocket* s);
+    void handleIpcCommand(QTcpSocket* s, const QJsonObject& cmd);
+    QJsonObject stateJson();
+    void broadcastState();
+    QJsonArray credsJson();
 
     QLineEdit* m_edProject = nullptr;
     QLineEdit* m_edGmake = nullptr;
@@ -81,4 +103,9 @@ private:
     EncryptWorker* m_encWorker = nullptr;
     std::vector<FidoCredential> m_creds;
     QString m_lastBuiltHex;
+
+    /* 本地 IPC 调试接口 (127.0.0.1:17346, JSON 行协议) */
+    QTcpServer* ipcServer = nullptr;
+    QList<QTcpSocket*> ipcClients;
+    QHash<QTcpSocket*, QByteArray> ipcBuffers;
 };

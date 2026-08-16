@@ -31,6 +31,14 @@
 #include <QDateTime>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QHostAddress>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonParseError>
+#include <QTimer>
 
 static const char* APP_QSS = R"(
 QWidget { background: #F3F4F6; color: #1F2328; font-size: 13px; }
@@ -58,7 +66,7 @@ QGroupBox { border: 1px solid #E2E4E8; border-radius: 6px; margin-top: 8px; padd
 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #6B7280; font-size: 12px; }
 )";
 
-MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
+MainWindow::MainWindow(const QString& initialDir, QWidget* parent) : QMainWindow(parent)
 {
     setWindowTitle("RMR 一键编译工具");
     resize(1080, 720);
@@ -69,6 +77,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
     connect(m_buildRunner, &BuildRunner::progress, this, [this](int p, const QString& t) {
         m_barBuild->setValue(p);
         m_lblBuildStatus->setText(t);
+        QJsonObject o; o["type"] = "progress"; o["pct"] = p; o["text"] = t; ipcBroadcast(o);
     });
     connect(m_buildRunner, &BuildRunner::finished, this, &MainWindow::onBuildFinished);
 
@@ -80,9 +89,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
     root->addWidget(encryptCard(), 10);
     setCentralWidget(central);
 
-    // Defaults
-    QDir repo("C:/Users/Nalani/Documents/GitHub/tiny-rmr-1-2.05/firmware/RMR");
-    if (repo.exists()) m_edProject->setText(repo.absolutePath());
+    // Defaults: 优先使用命令行传入的工程目录, 否则回退默认仓库路径
+    QString repoDir = initialDir;
+    if (repoDir.isEmpty()) {
+        QDir defaultRepo("C:/Users/Nalani/Documents/GitHub/tiny-rmr-1-2.05/firmware/RMR");
+        if (defaultRepo.exists()) repoDir = defaultRepo.absolutePath();
+    }
+    QDir repo(repoDir);
+    if (repo.exists() && QFile::exists(repo.filePath("app_config.h")))
+        m_edProject->setText(repo.absolutePath());
     connect(m_edProject, &QLineEdit::editingFinished, this, &MainWindow::loadProjectMeta);
     loadProjectMeta();
     m_edGmake->setText(pickGmake());
@@ -90,8 +105,252 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
     refreshCredentialList();
     onAuthChanged();
     autofillOutPath();
+    setupIpc();
 }
 
+/* ================= 本地 IPC 调试接口 (127.0.0.1:17346, JSON 行协议, 与 RMRDebugger 同构) ================= */
+void MainWindow::setupIpc()
+{
+    ipcServer = new QTcpServer(this);
+    if (!ipcServer->listen(QHostAddress::LocalHost, 17346)) {
+        appendLog(QString("[SYS] IPC 接口启动失败: %1").arg(ipcServer->errorString()), 2);
+        return;
+    }
+    appendLog("[SYS] IPC 接口已启动: 127.0.0.1:17346 (JSON)", 0);
+    connect(ipcServer, &QTcpServer::newConnection, this, [this](){
+        while (QTcpSocket* s = ipcServer->nextPendingConnection()) {
+            ipcClients.append(s);
+            ipcBuffers.insert(s, QByteArray());
+            connect(s, &QTcpSocket::readyRead, this, [this, s](){ handleIpcRead(s); });
+            connect(s, &QTcpSocket::disconnected, this, [this, s](){
+                ipcClients.removeAll(s); ipcBuffers.remove(s); s->deleteLater();
+            });
+            ipcSendHello(s);
+        }
+    });
+}
+
+void MainWindow::ipcSend(QTcpSocket* s, const QJsonObject& obj)
+{
+    if (!s) return;
+    QByteArray line = QJsonDocument(obj).toJson(QJsonDocument::Compact) + '\n';
+    s->write(line);
+    s->flush();
+}
+
+void MainWindow::ipcBroadcast(const QJsonObject& obj)
+{
+    if (ipcClients.isEmpty()) return;
+    QByteArray line = QJsonDocument(obj).toJson(QJsonDocument::Compact) + '\n';
+    for (QTcpSocket* s : ipcClients) { s->write(line); s->flush(); }
+}
+
+QJsonArray MainWindow::credsJson()
+{
+    QJsonArray arr;
+    for (const FidoCredential& c : m_creds) {
+        QJsonObject o;
+        o["name"] = c.name;
+        o["rp_id"] = c.rpId;
+        o["device"] = c.device;
+        o["yubico_id"] = c.yubicoId;
+        o["cred_id"] = QString::fromLatin1(c.credId.toBase64());
+        arr.append(o);
+    }
+    return arr;
+}
+
+QJsonObject MainWindow::stateJson()
+{
+    QJsonObject st;
+    st["type"] = "state";
+    st["app"] = "RMRBuildTool";
+    st["ts"] = QString::number(QDateTime::currentMSecsSinceEpoch());
+    st["project_dir"] = m_edProject ? m_edProject->text() : QString();
+    st["gmake"] = m_edGmake ? m_edGmake->text() : QString();
+    st["version"] = m_edVersion ? m_edVersion->text() : QString();
+    st["note"] = m_edNote ? m_edNote->text() : QString();
+    st["all_variants"] = m_cmbVariant ? (m_cmbVariant->currentIndex() == 1) : false;
+    st["building"] = m_buildRunner ? m_buildRunner->running() : false;
+    st["build_progress"] = m_barBuild ? m_barBuild->value() : 0;
+    st["build_status"] = m_lblBuildStatus ? m_lblBuildStatus->text() : QString();
+    st["last_result"] = m_lblBuildResult ? m_lblBuildResult->text() : QString();
+    st["hex_in"] = m_edHexIn ? m_edHexIn->text() : QString();
+    st["hex_out"] = m_edHexOut ? m_edHexOut->text() : QString();
+    st["auth"] = (m_radPwd && m_radPwd->isChecked()) ? 1 : ((m_radPasskey && m_radPasskey->isChecked()) ? 3 : 2);
+    st["block_size"] = (qint64)(m_cmbBlock ? m_cmbBlock->currentData().toUInt() : 16384);
+    st["encrypt_busy"] = (m_encThread != nullptr);
+    st["creds"] = credsJson();
+    return st;
+}
+
+void MainWindow::broadcastState()
+{
+    ipcBroadcast(stateJson());
+}
+
+void MainWindow::ipcSendHello(QTcpSocket* s)
+{
+    QJsonObject h = stateJson();
+    h["type"] = "hello";
+    ipcSend(s, h);
+}
+
+void MainWindow::handleIpcRead(QTcpSocket* s)
+{
+    ipcBuffers[s] += s->readAll();
+    while (true) {
+        int nl = ipcBuffers[s].indexOf('\n');
+        if (nl < 0) break;
+        QByteArray line = ipcBuffers[s].left(nl).trimmed();
+        ipcBuffers[s].remove(0, nl + 1);
+        if (line.isEmpty()) continue;
+        QJsonParseError err;
+        QJsonDocument doc = QJsonDocument::fromJson(line, &err);
+        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+            QJsonObject r; r["type"] = "error"; r["msg"] = "bad json"; ipcSend(s, r);
+            continue;
+        }
+        handleIpcCommand(s, doc.object());
+    }
+}
+
+void MainWindow::handleIpcCommand(QTcpSocket* s, const QJsonObject& cmd)
+{
+    QString c = cmd["cmd"].toString();
+    auto reply = [&](bool ok, const QString& msg = QString()){
+        QJsonObject r; r["type"] = "reply"; r["cmd"] = c; r["ok"] = ok; r["msg"] = msg; ipcSend(s, r);
+    };
+
+    if (c == "ping") { reply(true, "pong"); return; }
+    if (c == "state") { ipcSendHello(s); return; }
+    if (c == "setdir") {
+        QString path = cmd["path"].toString();
+        if (path.isEmpty() || !QFile::exists(QDir(path).filePath("app_config.h"))) { reply(false, "目录无效: 需包含 app_config.h"); return; }
+        m_edProject->setText(QDir(path).absolutePath());
+        loadProjectMeta();
+        reply(true, "工程目录: " + m_edProject->text());
+        broadcastState();
+        return;
+    }
+    if (c == "setgmake") {
+        QString path = cmd["path"].toString();
+        if (path.isEmpty() || !QFile::exists(path)) { reply(false, "gmake 路径不存在"); return; }
+        m_edGmake->setText(path);
+        reply(true, "gmake: " + path);
+        broadcastState();
+        return;
+    }
+    if (c == "setversion") { m_edVersion->setText(cmd["ver"].toString()); reply(true, "version set"); broadcastState(); return; }
+    if (c == "setnote") { m_edNote->setText(cmd["note"].toString()); reply(true, "note set"); broadcastState(); return; }
+    if (c == "variant") {
+        m_cmbVariant->setCurrentIndex(cmd["all"].toVariant().toBool() ? 1 : 0);
+        reply(true, "variant set");
+        broadcastState();
+        return;
+    }
+    if (c == "build") {
+        if (m_buildRunner->running()) { reply(false, "构建进行中"); return; }
+        if (cmd.contains("all")) m_cmbVariant->setCurrentIndex(cmd["all"].toVariant().toBool() ? 1 : 0);
+        if (cmd.contains("version")) m_edVersion->setText(cmd["version"].toString());
+        if (cmd.contains("note")) m_edNote->setText(cmd["note"].toString());
+        QString dir = m_edProject->text().trimmed();
+        QString gmake = m_edGmake->text().trimmed();
+        if (dir.isEmpty() || !QFile::exists(QDir(dir).filePath("app_config.h"))) { reply(false, "未选择工程目录"); return; }
+        if (gmake.isEmpty() || !QFile::exists(gmake)) { reply(false, "gmake 路径无效"); return; }
+        m_log->clear();
+        m_barBuild->setValue(0);
+        m_lblBuildResult->clear();
+        m_btnBuild->setEnabled(false);
+        m_btnStop->setEnabled(true);
+        m_buildRunner->startBuild(dir, m_cmbVariant->currentIndex() == 1, gmake, m_edVersion->text(), m_edNote->text());
+        reply(true, "build started");
+        broadcastState();
+        return;
+    }
+    if (c == "stop") {
+        if (!m_buildRunner->running()) { reply(false, "无进行中的构建"); return; }
+        stopBuild();
+        reply(true, "stop requested");
+        broadcastState();
+        return;
+    }
+    if (c == "genpwd") {
+        regeneratePassword();
+        QJsonObject r; r["type"] = "reply"; r["cmd"] = c; r["ok"] = true; r["msg"] = "password regenerated";
+        r["password"] = m_edPassword ? m_edPassword->text() : QString();
+        ipcSend(s, r);
+        QJsonObject p; p["type"] = "password"; p["password"] = m_edPassword ? m_edPassword->text() : QString();
+        ipcBroadcast(p);
+        broadcastState();
+        return;
+    }
+    if (c == "getpwd") {
+        QJsonObject r; r["type"] = "reply"; r["cmd"] = c; r["ok"] = true;
+        r["msg"] = m_edPassword ? m_edPassword->text() : QString();
+        ipcSend(s, r);
+        return;
+    }
+    if (c == "setpwd") {
+        if (m_radPwd && m_radPwd->isChecked()) m_edPassword->setText(cmd["password"].toString());
+        reply(true, "password set");
+        broadcastState();
+        return;
+    }
+    if (c == "setauth") {
+        int a = cmd["auth"].toInt(1);
+        if (a == 1) m_radPwd->setChecked(true);
+        else if (a == 2) m_radFido->setChecked(true);
+        else if (a == 3) m_radPasskey->setChecked(true);
+        else { reply(false, "auth 取值: 1=密码 2=FIDO2 3=通行证"); return; }
+        reply(true, "auth set");
+        broadcastState();
+        return;
+    }
+    if (c == "encrypt") {
+        if (m_encThread) { reply(false, "加密进行中"); return; }
+        if (cmd.contains("in")) { m_edHexIn->setText(cmd["in"].toString()); autofillOutPath(); }
+        if (cmd.contains("out")) m_edHexOut->setText(cmd["out"].toString());
+        if (cmd.contains("version")) m_edVersion->setText(cmd["version"].toString());
+        if (cmd.contains("note")) m_edNote->setText(cmd["note"].toString());
+        if (cmd.contains("blockSize")) {
+            int idx = m_cmbBlock->findData(cmd["blockSize"].toInt());
+            if (idx >= 0) m_cmbBlock->setCurrentIndex(idx);
+        }
+        if (cmd.contains("auth")) {
+            int a = cmd["auth"].toInt();
+            if (a == 1) m_radPwd->setChecked(true);
+            else if (a == 2) m_radFido->setChecked(true);
+            else if (a == 3) m_radPasskey->setChecked(true);
+        }
+        if (cmd.contains("password") && m_radPwd->isChecked())
+            m_edPassword->setText(cmd["password"].toString());
+        if (cmd.contains("credId")) {
+            QByteArray want = QByteArray::fromBase64(cmd["credId"].toString().toLatin1());
+            for (int i = 0; i < m_cmbCred->count(); ++i)
+                if (m_cmbCred->itemData(i).toByteArray() == want) { m_cmbCred->setCurrentIndex(i); break; }
+        }
+        if (m_edHexIn->text().trimmed().isEmpty() || !QFile::exists(m_edHexIn->text().trimmed())) { reply(false, "请先选择要加密的 hex"); return; }
+        if (m_edHexOut->text().trimmed().isEmpty()) autofillOutPath();
+        EncryptJob job;
+        QString err;
+        if (!buildEncryptJobFromUi(job, err)) { reply(false, err); return; }
+        runEncrypt(job);
+        reply(true, "encrypt started");
+        return;
+    }
+    if (c == "creds") {
+        QJsonObject r; r["type"] = "reply"; r["cmd"] = c; r["ok"] = true; r["creds"] = credsJson();
+        ipcSend(s, r);
+        return;
+    }
+    if (c == "quit") {
+        reply(true, "bye");
+        QTimer::singleShot(150, this, &QWidget::close);
+        return;
+    }
+    reply(false, "unknown cmd: " + c);
+}
 MainWindow::~MainWindow()
 {
     if (m_encThread) {
@@ -348,6 +607,7 @@ void MainWindow::appendLog(const QString& text, int kind)
     QString color = kind == 1 ? "#4ADE80" : (kind == 2 ? "#F87171" : "#E6E8EB");
     QString esc = text.toHtmlEscaped();
     m_log->append(QString("<span style=\"color:%1\">%2</span>").arg(color, esc));
+    QJsonObject o; o["type"] = "log"; o["kind"] = kind; o["text"] = text; ipcBroadcast(o);
 }
 
 void MainWindow::startBuild()
@@ -369,6 +629,7 @@ void MainWindow::startBuild()
     m_btnBuild->setEnabled(false);
     m_btnStop->setEnabled(true);
     m_buildRunner->startBuild(dir, all, gmake, m_edVersion->text(), m_edNote->text());
+    broadcastState();
 }
 
 void MainWindow::stopBuild()
@@ -376,12 +637,16 @@ void MainWindow::stopBuild()
     m_buildRunner->stop();
     m_btnBuild->setEnabled(true);
     m_btnStop->setEnabled(false);
+    broadcastState();
 }
 
 void MainWindow::onBuildFinished(bool ok, const QStringList& hexFiles, const QString& error)
 {
     m_btnBuild->setEnabled(true);
     m_btnStop->setEnabled(false);
+    QJsonObject bf; bf["type"] = "build_finished"; bf["ok"] = ok; bf["error"] = error;
+    QJsonArray hexArr; for (const QString& h : hexFiles) hexArr.append(h);
+    bf["hex"] = hexArr; ipcBroadcast(bf); broadcastState();
     if (ok) {
         m_barBuild->setValue(100);
         m_lblBuildStatus->setText("构建完成");
@@ -529,10 +794,20 @@ void MainWindow::startEncrypt()
     if (out.isEmpty()) { QMessageBox::warning(this, "提示", "请选择输出路径"); return; }
 
     EncryptJob job;
-    job.inPath = in;
-    job.outPath = out;
+    QString err;
+    if (!buildEncryptJobFromUi(job, err)) {
+        QMessageBox::warning(this, "提示", err);
+        return;
+    }
+    runEncrypt(job);
+}
+
+bool MainWindow::buildEncryptJobFromUi(EncryptJob& job, QString& err)
+{
+    job.inPath = m_edHexIn->text().trimmed();
+    job.outPath = m_edHexOut->text().trimmed();
     job.blockSize = (quint32)m_cmbBlock->currentData().toUInt();
-    job.fileName = QFileInfo(in).fileName();
+    job.fileName = QFileInfo(job.inPath).fileName();
     job.fileVersion = m_edVersion->text().trimmed();
     if (job.fileVersion.isEmpty()) job.fileVersion = currentVersion();
     job.updateNote = m_edNote->text().trimmed();
@@ -540,40 +815,46 @@ void MainWindow::startEncrypt()
                         .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm"));
 
     if (m_radPwd->isChecked()) {
-        if (m_edPassword->text().isEmpty()) { QMessageBox::warning(this, "提示", "密码为空"); return; }
+        if (m_edPassword->text().isEmpty()) { err = "密码为空"; return false; }
         job.authType = 1;
         job.password = m_edPassword->text();
-    } else {
-        QByteArray id = m_cmbCred->currentData().toByteArray();
-        if (id.isEmpty()) { QMessageBox::warning(this, "提示", "请先新建凭据"); return; }
-        const FidoCredential* cred = nullptr;
-        for (const FidoCredential& c : m_creds)
-            if (c.credId == id) { cred = &c; break; }
-        if (!cred) { QMessageBox::warning(this, "提示", "凭据不存在"); return; }
-
-        // 16-byte container salt + 32-byte PRF salt -> hardware-derived secret
-        quint8 salt16[16], prfSalt[32], secret[32];
-        quint32 rnd[4];
-        QRandomGenerator::system()->fillRange(rnd);
-        memcpy(salt16, rnd, 16);
-        fwsec::webauthn_prf_salt(salt16, prfSalt);
-        std::string err;
-        if (!fwsec::webauthn_get_prf_secret((void*)winId(), cred->rpId.toStdString(),
-                                            std::vector<uint8_t>(cred->credId.begin(), cred->credId.end()),
-                                            (uint8_t)cred->device, prfSalt, secret, err)) {
-            QMessageBox::warning(this, "认证失败", QString::fromStdString(err));
-            return;
-        }
-        job.authType = m_radPasskey->isChecked() ? 3 : 2;
-        job.device = cred->device;
-        job.rpId = cred->rpId;
-        job.credId = cred->credId;
-        if (!cred->yubicoId.isEmpty()) job.buildMeta += ",yubico=" + cred->yubicoId;
-        job.salt = QByteArray((const char*)salt16, 16);
-        job.fidoSecret = QByteArray((const char*)secret, 32);
-        fwsec::secure_zero(secret, 32);
+        return true;
     }
 
+    QByteArray id = m_cmbCred->currentData().toByteArray();
+    if (id.isEmpty()) { err = "请先新建凭据"; return false; }
+    const FidoCredential* cred = nullptr;
+    for (const FidoCredential& c : m_creds)
+        if (c.credId == id) { cred = &c; break; }
+    if (!cred) { err = "凭据不存在"; return false; }
+
+    // 16-byte container salt + 32-byte PRF salt -> hardware-derived secret
+    quint8 salt16[16], prfSalt[32], secret[32];
+    quint32 rnd[4];
+    QRandomGenerator::system()->fillRange(rnd);
+    memcpy(salt16, rnd, 16);
+    fwsec::webauthn_prf_salt(salt16, prfSalt);
+    std::string werr;
+    if (!fwsec::webauthn_get_prf_secret((void*)winId(), cred->rpId.toStdString(),
+                                        std::vector<uint8_t>(cred->credId.begin(), cred->credId.end()),
+                                        (uint8_t)cred->device, prfSalt, secret, werr)) {
+        err = QString::fromStdString(werr);
+        return false;
+    }
+    job.authType = m_radPasskey->isChecked() ? 3 : 2;
+    job.device = cred->device;
+    job.rpId = cred->rpId;
+    job.credId = cred->credId;
+    if (!cred->yubicoId.isEmpty()) job.buildMeta += ",yubico=" + cred->yubicoId;
+    job.salt = QByteArray((const char*)salt16, 16);
+    job.fidoSecret = QByteArray((const char*)secret, 32);
+    fwsec::secure_zero(secret, 32);
+    return true;
+}
+
+void MainWindow::runEncrypt(const EncryptJob& job)
+{
+    if (m_encThread) return;  // 加密进行中, 调用方已校验
     m_btnEncrypt->setEnabled(false);
     m_barEncrypt->setValue(0);
     m_lblEncryptResult->setText("加密中 ...");
@@ -584,16 +865,22 @@ void MainWindow::startEncrypt()
     connect(m_encThread, &QThread::finished, m_encWorker, &QObject::deleteLater);
     connect(m_encThread, &QThread::finished, m_encThread, &QObject::deleteLater);
     connect(m_encWorker, &EncryptWorker::progress, this, [this](qint64 done, qint64 total) {
-        m_barEncrypt->setValue(total > 0 ? int(100.0 * done / total) : 0);
+        int pct = total > 0 ? int(100.0 * done / total) : 0;
+        m_barEncrypt->setValue(pct);
+        QJsonObject o; o["type"] = "encrypt_progress"; o["done"] = (double)done; o["total"] = (double)total; o["pct"] = pct;
+        ipcBroadcast(o);
     });
     connect(m_encWorker, &EncryptWorker::finished, this, &MainWindow::onEncryptFinished);
     m_encThread->start();
     QMetaObject::invokeMethod(m_encWorker, "doEncrypt", Qt::QueuedConnection, Q_ARG(EncryptJob, job));
+    broadcastState();
 }
 
 void MainWindow::onEncryptFinished(bool ok, const QString& error, const QString& summary)
 {
     m_btnEncrypt->setEnabled(true);
+    QJsonObject ef; ef["type"] = "encrypt_finished"; ef["ok"] = ok; ef["error"] = error; ef["summary"] = summary;
+    ipcBroadcast(ef); broadcastState();
     if (ok) {
         m_barEncrypt->setValue(100);
         m_lblEncryptResult->setText(summary);

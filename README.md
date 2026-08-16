@@ -237,7 +237,7 @@ cmake --build build
 ```
 运行前确保 `openocd.exe` 与 XDS110 驱动可用；程序内可配置 OpenOCD 路径与脚本目录。
 
-### IPC 接口（127.0.0.1:7345）
+### IPC 接口（127.0.0.1:17345）
 连接后立即收到 `hello`（含探针列表/当前状态/最近遥测）。请求/响应均为单行 JSON，换行分隔。
 
 命令（`{"cmd": ...}`）：
@@ -271,8 +271,44 @@ cmake --build build
 {"cmd":"poll","enabled":true,"intervalMs":150}
 ```
 
----
 
+### RMRBuildTool IPC 接口（127.0.0.1:17346）
+启动时可用命令行第一个参数预选工程目录: mrbuildtool.exe <工程目录>。
+连接后立即收到 hello。请求/响应均为单行 JSON，换行分隔。
+
+命令（{"cmd": ...}）：
+
+| cmd | 参数 | 说明 |
+|---|---|---|
+| ping | — | 健康检查，返回 pong |
+| state | — | 重新发送 hello |
+| setdir | path | 设置工程目录（需包含 app_config.h） |
+| setgmake | path | 设置 gmake.exe 路径 |
+| setversion | er | 设置版本号 |
+| setnote | 
+ote | 设置更新说明（仅随加密容器嵌入） |
+| ariant | ll | 构建范围: false=默认 DBGL, true=全部 6 变体 |
+| uild | ll,version,note | 开始构建（clean+all，完成后还原默认配置并重建） |
+| stop | — | 停止构建 |
+| genpwd | — | 重新生成强密码（reply 与 password 事件携带） |
+| getpwd | — | 读取当前密码 |
+| setpwd | password | 设置密码 |
+| setauth | uth | 解锁方式 1=密码 2=FIDO2 3=通行证 |
+| ncrypt | in,out,auth,password,version,note,blockSize,credId | 生成 FWSEC1 加密固件 |
+| creds | — | 列出 FIDO2/通行证凭据 |
+| quit | — | 退出程序 |
+
+事件（{"type": ...}）：hello、eply、state、log、progress、uild_finished、password、ncrypt_progress、ncrypt_finished。
+
+示例：
+
+`json
+{"cmd":"setdir","path":"C:/repo/firmware/RMR"}
+{"cmd":"build","all":true}
+{"cmd":"genpwd"}
+`
+
+---
 ## 烧录方法（XDS110）
 
 ```bat
