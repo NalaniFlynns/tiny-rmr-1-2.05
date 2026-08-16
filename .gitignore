@@ -1,4 +1,4 @@
-﻿# --- CCS / TI ARM 构建产物 ---
+# --- CCS / TI ARM 构建产物 ---
 firmware/RMR/Debug/*.o
 firmware/RMR/Debug/*.d
 firmware/RMR/Debug/*.d_raw
@@ -21,3 +21,8 @@ firmware/RMRDebugger/.qtcreator/
 
 # --- 运行时衍生文件 ---
 RMR_Factory_Tool_V2.0/flash_history.db
+# --- 构建工具产物 ---
+firmware/RMRBuildTool/build/
+firmware/fwsec/build/
+firmware/RMR/Debug/syscfg/*.dot
+firmware/RMR/Debug/syscfg/*.d_raw

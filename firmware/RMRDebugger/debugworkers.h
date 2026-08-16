@@ -6,6 +6,8 @@
 #include <QVariantMap>
 #include <QProcess>
 #include <QTcpSocket>
+#include <functional>
+#include "fwsecflash.h"
 
 constexpr uint32_t BASE_ADDR = 0x20000000;
 #define OFS_VBATT_RAW_MV        0xB0
@@ -103,6 +105,7 @@ public:
     ProbeType probeType;
     bool autoFlashEnabled = false;
     QString fwPath;
+    std::function<FwsecUnlockResult(const fwsec::FwsecFileInfo&)> askUnlock;  // set by UI thread
     bool enablePolling = false;
     int pollIntervalMs = 150;   /* 轮询间隔(ms), J-Link/OpenOCD 可持续会话可达 10-50Hz */
 

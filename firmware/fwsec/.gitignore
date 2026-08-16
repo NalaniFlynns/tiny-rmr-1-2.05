@@ -1,0 +1,11 @@
+# FWSEC1 源码库忽略构建/测试产物
+*.o
+*.obj
+*.exe
+*.bin
+*.fwsec
+build/
+dbg*.cpp
+dbg*.txt
+refmain.cpp
+mlkem_interop.cpp

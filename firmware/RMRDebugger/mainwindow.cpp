@@ -12,6 +12,7 @@
 #include <QDateTime>
 #include <QPixmap>
 #include <QFileDialog>
+#include <QInputDialog>
 #include <QSqlQuery>
 #include <QFile>
 #include <QTextStream>
@@ -234,8 +235,7 @@ void MainWindow::applyTheme() {
 
 void MainWindow::setFwPath(const QString& path) {
     txtFwPath->setText(path);
-    QString foundVer = parseHexVersion(path);
-    txtHexVer->setText(foundVer.isEmpty() ? "Not Found" : foundVer);
+    updateFirmwareInfo(path);
     for (auto w : activeWorkers) w->fwPath = path;
 }
 
@@ -631,8 +631,24 @@ void MainWindow::setupUI() {
     txtHexVer->setFixedWidth(100);
     txtHexVer->setPlaceholderText("e.g. V1.0.1");
 
+    QLabel *lblHexNoteTitle = new QLabel("Note:");
+    lblHexNoteTitle->setStyleSheet("font-weight: bold; color: #0078D7;");
+    txtHexNote = new QLineEdit();
+    txtHexNote->setReadOnly(true);
+    txtHexNote->setFixedWidth(240);
+    txtHexNote->setPlaceholderText("update note");
+
+    QLabel *lblHexMetaTitle = new QLabel("Meta:");
+    lblHexMetaTitle->setStyleSheet("font-weight: bold; color: #0078D7;");
+    txtHexMeta = new QLineEdit();
+    txtHexMeta->setReadOnly(true);
+    txtHexMeta->setFixedWidth(260);
+    txtHexMeta->setPlaceholderText("build / alg / yubico");
+
     hFile->addWidget(btnSel); hFile->addWidget(txtFwPath, 1);
     hFile->addWidget(lblHexVerTitle); hFile->addWidget(txtHexVer);
+    hFile->addWidget(lblHexNoteTitle); hFile->addWidget(txtHexNote);
+    hFile->addWidget(lblHexMetaTitle); hFile->addWidget(txtHexMeta);
     vProg->addLayout(hFile);
 
     QHBoxLayout *hScan = new QHBoxLayout();
@@ -1460,7 +1476,11 @@ void MainWindow::addProbeToUI(uint32_t sn, ProbeType type, bool useXdsAdapter) {
     }
 
     w->fwPath = txtFwPath->text();
-    w->fwPath = txtFwPath->text();
+    w->askUnlock = [this](const fwsec::FwsecFileInfo& info) {
+        FwsecUnlockResult r;
+        QMetaObject::invokeMethod(this, [&] { r = requestFwsecUnlock(info); }, Qt::BlockingQueuedConnection);
+        return r;
+    };
     w->setSpeed(cmbSpeed->currentText().remove(" kHz").toInt());
     w->pollIntervalMs = spinPollMs ? spinPollMs->value() : 150;
 
@@ -1611,10 +1631,9 @@ void MainWindow::addLogItem(int id, const QString& uuid, bool success) {
     logTable->scrollToBottom();
 }
 
-QString MainWindow::parseHexVersion(const QString& path) {
+QByteArray MainWindow::hexToBinData(const QString& path) {
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return "";
-
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
     QByteArray binData;
     QTextStream in(&file);
     while (!in.atEnd()) {
@@ -1629,31 +1648,54 @@ QString MainWindow::parseHexVersion(const QString& path) {
         }
     }
     file.close();
+    return binData;
+}
 
+QString MainWindow::parseHexVersion(const QString& path) {
     QString printable;
-    for (char c : binData) {
+    for (char c : hexToBinData(path)) {
         if (c >= 32 && c <= 126) printable += c;
         else printable += ' ';
     }
-
     QRegularExpression re("V\\d+\\.\\d+(?:\\.\\d+)?(?:_[a-zA-Z0-9_]+)?");
     QRegularExpressionMatch match = re.match(printable);
-    if (match.hasMatch()) {
-        return match.captured(0);
-    }
+    if (match.hasMatch()) return match.captured(0);
     return "";
 }
 
+
+void MainWindow::updateFirmwareInfo(const QString& path) {
+    if (path.isEmpty()) { txtHexVer->clear(); txtHexNote->clear(); txtHexMeta->clear(); return; }
+    if (path.endsWith(".fwsec", Qt::CaseInsensitive)) {
+        fwsec::FwsecFileInfo info;
+        if (fwsec::fwsec_probe(path.toStdString(), info)) {
+            QString authName = info.auth_type == fwsec::AUTH_PASSWORD ? "密码"
+                             : (info.auth_type == fwsec::AUTH_PASSKEY ? "手机通行证" : "FIDO2 安全密钥");
+            txtHexVer->setText(QString::fromStdString(info.file_version));
+            txtHexNote->setText(QString::fromStdString(info.update_note));
+            QString meta = QString::fromStdString(info.build_meta);
+            if (meta.isEmpty()) meta = QString("FWSEC1 v%1, %2 加密").arg(info.version).arg(authName);
+            txtHexMeta->setText(meta);
+            txtHexMeta->setToolTip(meta);
+            return;
+        }
+        txtHexVer->setText("FWSEC1 损坏");
+        txtHexNote->clear();
+        txtHexMeta->clear();
+        return;
+    }
+    QString foundVer = parseHexVersion(path);
+    txtHexVer->setText(foundVer.isEmpty() ? "Not Found" : foundVer);
+    /* 更新说明/构建元信息仅存于 FWSEC1 加密容器, 非加密 hex 不显示 */
+    txtHexNote->clear();
+    txtHexMeta->setText("plain hex");
+}
+
 void MainWindow::selectFirmware() {
-    QString path = QFileDialog::getOpenFileName(this, "Select Firmware", "", "Hex Files (*.hex)");
+    QString path = QFileDialog::getOpenFileName(this, "Select Firmware", "", "Firmware (*.hex *.fwsec)");
     if (!path.isEmpty()) {
         txtFwPath->setText(path);
-        QString foundVer = parseHexVersion(path);
-        if (foundVer.isEmpty()) {
-            txtHexVer->setText("Not Found");
-        } else {
-            txtHexVer->setText(foundVer);
-        }
+        updateFirmwareInfo(path);
         for (auto w : activeWorkers) w->fwPath = path;
     }
 }
@@ -1875,6 +1917,7 @@ void MainWindow::onFwVer(uint32_t sn, const QString& ver) {
     }
     if (sn == cmbActiveProbe->currentData().toUInt()) lblVer->setText("FW: " + ver);
 }
+
 
 void MainWindow::onProgress(uint32_t sn, int pct, const QString& text) {
     int row = probeRowMap.value(sn, -1);
@@ -2201,4 +2244,61 @@ void MainWindow::onMemReadRes(uint32_t sn, uint32_t addr, uint32_t val, int size
     QJsonObject r1; r1["type"]="memread"; r1["sn"]=QString::number(sn); r1["addr"]=QString("0x%1").arg(addr,8,16,QChar('0')); r1["val"]=QString("0x%1").arg(val,size*2,16,QChar('0')); r1["size"]=size; ipcBroadcast(r1);
     int chars = (size == 4) ? 8 : (size == 2) ? 4 : 2;
     txtMemVal->setText(QString("0x%1").arg(val, chars, 16, QChar('0')).toUpper());
+}
+
+FwsecUnlockResult MainWindow::requestFwsecUnlock(const fwsec::FwsecFileInfo& info)
+{
+    FwsecUnlockResult r;
+    if (info.auth_type == fwsec::AUTH_PASSWORD) {
+        bool ok = false;
+        QString pwd = QInputDialog::getText(this, "解密固件",
+                                            "该固件为 FWSEC1 密码加密，请输入解密密码:",
+                                            QLineEdit::Password, QString(), &ok);
+        if (!ok) { r.cancelled = true; return r; }
+        if (pwd.isEmpty()) { r.error = "密码不能为空"; return r; }
+        r.password = pwd.toStdString();
+        return r;
+    }
+
+    bool passkey = (info.auth_type == fwsec::AUTH_PASSKEY);
+    QString devName = passkey ? "手机通行证 / Windows Hello" : "FIDO2 安全密钥";
+    QDialog dlg(this);
+    dlg.setWindowTitle("解密固件 - " + devName);
+    dlg.setMinimumWidth(440);
+    QVBoxLayout* lay = new QVBoxLayout(&dlg);
+    QLabel* l1 = new QLabel(QString("固件: %1\n加密方式: %2\nRP ID: %3\n容器: FWSEC1 v%4 (ML-KEM-768)")
+        .arg(QString::fromStdString(info.file_name), devName,
+             QString::fromStdString(info.rp_id)).arg(info.version), &dlg);
+    l1->setWordWrap(true);
+    QLabel* l2 = new QLabel(passkey
+        ? "请使用加密时对应的 Windows Hello / 手机通行证完成验证，验证期间请保持设备可用。"
+        : "请插入加密时使用的 FIDO2 安全密钥 (需支持 PRF / HMAC-Secret)，然后点击下方按钮。烧录全程请保持密钥插入。", &dlg);
+    l2->setWordWrap(true);
+    QLabel* st = new QLabel("", &dlg);
+    st->setWordWrap(true);
+    QPushButton* btn = new QPushButton(passkey ? "开始验证" : "插入密钥并验证", &dlg);
+    QPushButton* cancel = new QPushButton("取消", &dlg);
+    QHBoxLayout* hb = new QHBoxLayout;
+    hb->addWidget(btn); hb->addWidget(cancel); hb->addStretch(1);
+    lay->addWidget(l1); lay->addWidget(l2); lay->addWidget(st); lay->addLayout(hb);
+
+    connect(btn, &QPushButton::clicked, &dlg, [&] {
+        fwsec::u8 prfSalt[32], secret[32];
+        fwsec::webauthn_prf_salt(info.salt, prfSalt);
+        std::string err;
+        std::vector<uint8_t> cid = info.cred_id;
+        if (fwsec::webauthn_get_prf_secret((void*)winId(), info.rp_id, cid, info.device,
+                                           prfSalt, secret, err)) {
+            r.fido_secret.assign(secret, secret + 32);
+            fwsec::secure_zero(secret, 32);
+            fwsec::secure_zero(prfSalt, 32);
+            dlg.accept();
+        } else {
+            st->setText("验证失败: " + QString::fromStdString(err));
+            st->setStyleSheet("color:#B91C1C;");
+        }
+    });
+    connect(cancel, &QPushButton::clicked, &dlg, [&] { r.cancelled = true; dlg.reject(); });
+    dlg.exec();
+    return r;
 }

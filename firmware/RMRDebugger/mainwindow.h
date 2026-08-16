@@ -34,11 +34,14 @@
 #include <QSet>
 
 #include "DebugWorkers.h"
+#include "fwsec_webauthn.h"
 #include "functest.h"
 #include "PowerZWorker.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
+public slots:
+    FwsecUnlockResult requestFwsecUnlock(const fwsec::FwsecFileInfo& info);
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
@@ -88,6 +91,8 @@ private:
     void upsertTestRecord(const QVariantMap& rec);
     QVariantMap fetchTestRecord(const QString& uuid);
     QString parseHexVersion(const QString& path);
+    QByteArray hexToBinData(const QString& path);
+    void updateFirmwareInfo(const QString& path);
 
     void addProbeToUI(uint32_t sn, ProbeType type, bool useXdsAdapter = false);
     void removeProbeFromUI(uint32_t sn);
@@ -137,6 +142,8 @@ private:
 
     QLineEdit *txtFwPath;
     QLineEdit *txtHexVer;
+    QLineEdit *txtHexNote;
+    QLineEdit *txtHexMeta;
     QTableWidget *probeTable;
 
     QWidget *consoleContainer;

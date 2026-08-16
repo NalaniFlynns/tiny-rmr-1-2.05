@@ -1,7 +1,8 @@
-﻿$ErrorActionPreference = 'Continue'
+$ErrorActionPreference = 'Continue'
 $enc = New-Object System.Text.UTF8Encoding($false)
-$cfg = 'C:\Users\Nalani\workspace_v12\RMR\app_config.h'
-$debug = 'C:\Users\Nalani\workspace_v12\RMR\Debug'
+$rootDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$cfg = Join-Path $rootDir 'app_config.h'
+$debug = Join-Path $rootDir 'Debug'
 $gmake = 'C:\ti\ccs2100\ccs\utils\bin\gmake.exe'
 
 $orig = [System.IO.File]::ReadAllText($cfg, $enc)

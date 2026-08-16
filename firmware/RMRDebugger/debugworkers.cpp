@@ -19,9 +19,24 @@ void BaseWorker::processCommandGeneric(const Command& cmd) {
     try {
         if (cmd.type == CmdType::FLASH) {
             emit sigProgress(probeSN, 5, "Preparing Flashing...");
+            QString plain, err;
+            if (!fwsec_prepare_flash(cmd.strArg, askUnlock, plain, err)) {
+                emit sigLog(probeSN, "[ERROR] " + err);
+                emit sigProgress(probeSN, 0, "Flash Aborted");
+                return;
+            }
+            if (plain != cmd.strArg)
+                emit sigLog(probeSN, "[INFO] FWSEC1 encrypted firmware unlocked in memory, flashing...");
             emit sigLog(probeSN, QString("[INFO] Sending firmware flash command at %1 kHz...").arg(currentSpeedKHz));
 
-            executeFlash(cmd.strArg);
+            bool threw = false;
+            try {
+                executeFlash(plain);
+            } catch (...) {
+                threw = true;
+            }
+            if (plain != cmd.strArg) fwsec_cleanup(plain);
+            if (threw) throw;
 
             emit sigProgress(probeSN, 100, "Flash Complete");
             emit sigLog(probeSN, "[SUCCESS] Firmware flashed and MCU restarted successfully.");

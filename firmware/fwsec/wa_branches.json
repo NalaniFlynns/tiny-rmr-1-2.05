@@ -1,0 +1,106 @@
+[
+  {
+    "name": "3PP",
+    "commit": {
+      "sha": "285b517e44f9389c268bb1bb99b2589380880760",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/285b517e44f9389c268bb1bb99b2589380880760"
+    },
+    "protected": false
+  },
+  {
+    "name": "V4",
+    "commit": {
+      "sha": "1e6fcd1d06087c51cb5a789d13e26b213f3fd9e9",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/1e6fcd1d06087c51cb5a789d13e26b213f3fd9e9"
+    },
+    "protected": false
+  },
+  {
+    "name": "V6",
+    "commit": {
+      "sha": "384152f0e3a2c93d67fde8538348a91f7e0a221c",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/384152f0e3a2c93d67fde8538348a91f7e0a221c"
+    },
+    "protected": false
+  },
+  {
+    "name": "V7",
+    "commit": {
+      "sha": "e01ad39f515e4cebdccb0d820659c7baa2aaca67",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/e01ad39f515e4cebdccb0d820659c7baa2aaca67"
+    },
+    "protected": false
+  },
+  {
+    "name": "V8",
+    "commit": {
+      "sha": "7d74c6e0d03df74231208cb3699474bf801175e5",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/7d74c6e0d03df74231208cb3699474bf801175e5"
+    },
+    "protected": false
+  },
+  {
+    "name": "akshayku_V9",
+    "commit": {
+      "sha": "b0824e42c5c94abeb1de5efbd26059da7eee58b2",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/b0824e42c5c94abeb1de5efbd26059da7eee58b2"
+    },
+    "protected": false
+  },
+  {
+    "name": "conditionalUI",
+    "commit": {
+      "sha": "f193e352bd31df26e9b9984460180dddec1575c3",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/f193e352bd31df26e9b9984460180dddec1575c3"
+    },
+    "protected": false
+  },
+  {
+    "name": "ctap2.1",
+    "commit": {
+      "sha": "a127ea095c58d888c55d24cf8c52b9528dec3b30",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/a127ea095c58d888c55d24cf8c52b9528dec3b30"
+    },
+    "protected": false
+  },
+  {
+    "name": "manage-delete-wh",
+    "commit": {
+      "sha": "f3040c087d4d4d9840b752e64b4e0d4a2148b7d2",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/f3040c087d4d4d9840b752e64b4e0d4a2148b7d2"
+    },
+    "protected": false
+  },
+  {
+    "name": "master",
+    "commit": {
+      "sha": "ef82c157125a0490e05f6ea82a7adb1b8e1bad08",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/ef82c157125a0490e05f6ea82a7adb1b8e1bad08"
+    },
+    "protected": true
+  },
+  {
+    "name": "removeExperimentalAPIs",
+    "commit": {
+      "sha": "d69a9a1eb835314843f4a57e04860927584e8ff7",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/d69a9a1eb835314843f4a57e04860927584e8ff7"
+    },
+    "protected": false
+  },
+  {
+    "name": "user/aliwu/updatePluginH",
+    "commit": {
+      "sha": "0c2ada3404052e935791fa9f10e1e45a2c51e655",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/0c2ada3404052e935791fa9f10e1e45a2c51e655"
+    },
+    "protected": false
+  },
+  {
+    "name": "users/GitHubPolicyService/b74faf67-9710-42f6-89d2-0d7599d52669",
+    "commit": {
+      "sha": "0ab154dc2a444a204b12ffa8c02eeb8bc7461810",
+      "url": "https://api.github.com/repos/microsoft/webauthn/commits/0ab154dc2a444a204b12ffa8c02eeb8bc7461810"
+    },
+    "protected": false
+  }
+]
