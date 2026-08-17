@@ -1,7 +1,8 @@
 #pragma once
-// FIDO2 / Windows WebAuthn PRF helper (Windows 10 1903+ webauthn.dll).
-// The credential is created with the PRF extension; the 32-byte PRF output
-// is derived inside the authenticator and never leaves the hardware.
+// FIDO2 密钥派生统一入口。
+// device=1 (FIDO2 安全密钥): 直连 CTAP2/HID + hmac-secret (非驻留凭据, 免 PIN, 触碰即可)。
+//   绕过 Windows webauthn.dll —— 它只对驻留凭据暴露 PRF, 而驻留凭据强制 PIN/UV。
+// device=2 (Windows Hello / 通行证): Windows WebAuthn PRF (驻留凭据 + UV)。
 #include <cstdint>
 #include <string>
 #include <vector>

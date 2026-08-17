@@ -1,6 +1,7 @@
 // FIDO2 / WebAuthn PRF helper. Dynamically loads webauthn.dll so the app
 // still runs on systems without WebAuthn support.
 #include "fwsec_webauthn.h"
+#include "fwsec_ctap2.h"
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <wchar.h>
@@ -115,6 +116,12 @@ bool webauthn_make_credential(void* parent_hwnd, const std::string& rp_id,
                               const std::string& user_name, u8 device,
                               bool resident, std::vector<u8>& cred_id,
                               std::string& error) {
+    if (device == 1) {
+        // FIDO2 硬件密钥: 直连 CTAP2/HID + hmac-secret (非驻留凭据, 触碰即可, 免 PIN).
+        // Windows webauthn.dll 对非驻留凭据的 PRF 一律返回 NotSupportedError.
+        std::vector<u8> aaguid;
+        return ctap2_make_credential(rp_id, user_name, cred_id, aaguid, error);
+    }
     WaApi& a = api();
     if (!webauthn_available(error)) return false;
     if (rp_id.empty() || user_name.empty()) { error = "rp_id / user_name 不能为空"; return false; }
@@ -185,6 +192,10 @@ bool webauthn_get_prf_secret(void* parent_hwnd, const std::string& rp_id,
                              const std::vector<u8>& cred_id, u8 device,
                              const u8 salt[32], u8 secret[32],
                              std::string& error) {
+    if (device == 1) {
+        // FIDO2 硬件密钥: 直连 CTAP2/HID + hmac-secret (触碰即可, 免 PIN).
+        return ctap2_get_hmac_secret(rp_id, cred_id, salt, secret, error);
+    }
     WaApi& a = api();
     if (!webauthn_available(error)) return false;
     if (rp_id.empty() || cred_id.empty()) { error = "凭据信息缺失"; return false; }

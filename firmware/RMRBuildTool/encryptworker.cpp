@@ -1,6 +1,8 @@
 #include "encryptworker.h"
 #include "fwsec_container.h"
 #include "fwsec_util.h"
+#include "fwsec_webauthn.h"
+#include "fwsec_ctap2.h"
 #include <QFileInfo>
 
 void EncryptWorker::doEncrypt(EncryptJob job)
@@ -9,11 +11,47 @@ void EncryptWorker::doEncrypt(EncryptJob job)
     FwsecEncryptOptions opt;
     opt.auth_type = (job.authType == 2) ? AUTH_FIDO2 : (job.authType == 3 ? AUTH_PASSKEY : AUTH_PASSWORD);
     opt.password = job.password.toStdString();
-    if (job.fidoSecret.size() == 32) {
-        opt.fido_secret.assign(job.fidoSecret.begin(), job.fidoSecret.end());
-        opt.cred_id.assign(job.credId.begin(), job.credId.end());
+
+    // FIDO2 / 通行证: 在加密线程中触碰密钥派生 32 字节密钥 (UI 不冻结)
+    if (job.authType == 2 || job.authType == 3) {
+        if (job.salt.size() != 16 || job.credId.isEmpty() || job.rpId.isEmpty()) {
+            emit finished(false, "凭据信息缺失", "加密失败: 凭据信息缺失");
+            return;
+        }
+        emit status(job.authType == 2
+            ? "请触碰 FIDO2 安全密钥 (30 秒内) ..."
+            : "请完成 Windows Hello / 通行证验证 ...");
+        u8 prfSalt[32], secret[32];
+        webauthn_prf_salt((const u8*)job.salt.constData(), prfSalt);
+        std::vector<uint8_t> cid(job.credId.begin(), job.credId.end());
+        if (job.device == 1) {
+            ctap2_set_status_cb([](const char*, void* ctx) {
+                QObject* obj = static_cast<QObject*>(ctx);
+                QMetaObject::invokeMethod(obj, [obj] {
+                    auto* w = qobject_cast<EncryptWorker*>(obj);
+                    if (w) emit w->status("请触碰 FIDO2 安全密钥 ...");
+                }, Qt::QueuedConnection);
+            }, this);
+        }
+        std::string werr;
+        bool okDerive = webauthn_get_prf_secret(nullptr, job.rpId.toStdString(), cid,
+                                                (u8)job.device, prfSalt, secret, werr);
+        ctap2_set_status_cb(nullptr, nullptr);
+        if (!okDerive) {
+            QString msg = QString::fromStdString(werr);
+            if (msg.contains("NotSupportedError"))
+                msg += "\n\n手机跨设备通行证不支持密钥派生 (PRF), 请改用 FIDO2 安全密钥或 Windows Hello。";
+            secure_zero(secret, sizeof(secret));
+            secure_zero(prfSalt, sizeof(prfSalt));
+            emit finished(false, msg, "加密失败: " + msg);
+            return;
+        }
+        opt.fido_secret.assign(secret, secret + 32);
+        opt.cred_id = cid;
         opt.rp_id = job.rpId.toStdString();
         opt.device = (u8)job.device;
+        secure_zero(secret, sizeof(secret));
+        secure_zero(prfSalt, sizeof(prfSalt));
     }
     if (job.salt.size() == 16) {
         memcpy(opt.salt, job.salt.constData(), 16);

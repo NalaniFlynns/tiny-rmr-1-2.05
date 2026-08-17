@@ -2272,7 +2272,7 @@ FwsecUnlockResult MainWindow::requestFwsecUnlock(const fwsec::FwsecFileInfo& inf
     l1->setWordWrap(true);
     QLabel* l2 = new QLabel(passkey
         ? "请使用加密时对应的 Windows Hello / 手机通行证完成验证，验证期间请保持设备可用。"
-        : "请插入加密时使用的 FIDO2 安全密钥 (需支持 PRF / HMAC-Secret)，然后点击下方按钮。烧录全程请保持密钥插入。", &dlg);
+        : "请插入加密时使用的 FIDO2 安全密钥，然后点击下方按钮。免 PIN，触碰即可完成验证。烧录全程请保持密钥插入。", &dlg);
     l2->setWordWrap(true);
     QLabel* st = new QLabel("", &dlg);
     st->setWordWrap(true);
@@ -2283,6 +2283,11 @@ FwsecUnlockResult MainWindow::requestFwsecUnlock(const fwsec::FwsecFileInfo& inf
     lay->addWidget(l1); lay->addWidget(l2); lay->addWidget(st); lay->addLayout(hb);
 
     connect(btn, &QPushButton::clicked, &dlg, [&] {
+        if (!passkey) {
+            st->setText("请触碰 FIDO2 安全密钥 (30 秒内, 免 PIN) ...");
+            st->setStyleSheet("");
+            QApplication::processEvents();
+        }
         fwsec::u8 prfSalt[32], secret[32];
         fwsec::webauthn_prf_salt(info.salt, prfSalt);
         std::string err;
@@ -2294,7 +2299,10 @@ FwsecUnlockResult MainWindow::requestFwsecUnlock(const fwsec::FwsecFileInfo& inf
             fwsec::secure_zero(prfSalt, 32);
             dlg.accept();
         } else {
-            st->setText("验证失败: " + QString::fromStdString(err));
+            QString e = QString::fromStdString(err);
+            if (e.contains("NotSupportedError") && passkey)
+                e += "\n\n手机跨设备通行证不支持密钥派生 (PRF), 请改用 FIDO2 安全密钥或 Windows Hello。";
+            st->setText("验证失败: " + e);
             st->setStyleSheet("color:#B91C1C;");
         }
     });

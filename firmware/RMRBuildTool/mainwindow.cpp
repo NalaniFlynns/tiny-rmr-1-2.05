@@ -737,6 +737,10 @@ void MainWindow::newCredential()
     QString rpId = QInputDialog::getText(this, "新建凭据", "RP ID:", QLineEdit::Normal, "rmr.local", &ok);
     if (!ok || rpId.trimmed().isEmpty()) return;
 
+    if (!device2) {
+        QMessageBox::information(this, "新建凭据",
+            "请确认 FIDO2 安全密钥已插入。\n点击确定后, 30 秒内触碰密钥完成创建 (免 PIN)。");
+    }
     std::vector<uint8_t> cid;
     std::string err;
     if (!fwsec::webauthn_make_credential((void*)winId(), rpId.trimmed().toStdString(),
@@ -828,27 +832,17 @@ bool MainWindow::buildEncryptJobFromUi(EncryptJob& job, QString& err)
         if (c.credId == id) { cred = &c; break; }
     if (!cred) { err = "凭据不存在"; return false; }
 
-    // 16-byte container salt + 32-byte PRF salt -> hardware-derived secret
-    quint8 salt16[16], prfSalt[32], secret[32];
-    quint32 rnd[4];
-    QRandomGenerator::system()->fillRange(rnd);
-    memcpy(salt16, rnd, 16);
-    fwsec::webauthn_prf_salt(salt16, prfSalt);
-    std::string werr;
-    if (!fwsec::webauthn_get_prf_secret((void*)winId(), cred->rpId.toStdString(),
-                                        std::vector<uint8_t>(cred->credId.begin(), cred->credId.end()),
-                                        (uint8_t)cred->device, prfSalt, secret, werr)) {
-        err = QString::fromStdString(werr);
-        return false;
-    }
     job.authType = m_radPasskey->isChecked() ? 3 : 2;
     job.device = cred->device;
     job.rpId = cred->rpId;
     job.credId = cred->credId;
     if (!cred->yubicoId.isEmpty()) job.buildMeta += ",yubico=" + cred->yubicoId;
+    // 16-byte container salt (密钥派生移到加密线程, UI 不冻结)
+    quint8 salt16[16];
+    quint32 rnd[4];
+    QRandomGenerator::system()->fillRange(rnd);
+    memcpy(salt16, rnd, 16);
     job.salt = QByteArray((const char*)salt16, 16);
-    job.fidoSecret = QByteArray((const char*)secret, 32);
-    fwsec::secure_zero(secret, 32);
     return true;
 }
 
@@ -869,6 +863,9 @@ void MainWindow::runEncrypt(const EncryptJob& job)
         m_barEncrypt->setValue(pct);
         QJsonObject o; o["type"] = "encrypt_progress"; o["done"] = (double)done; o["total"] = (double)total; o["pct"] = pct;
         ipcBroadcast(o);
+    });
+    connect(m_encWorker, &EncryptWorker::status, this, [this](const QString& msg) {
+        m_lblEncryptResult->setText(msg);
     });
     connect(m_encWorker, &EncryptWorker::finished, this, &MainWindow::onEncryptFinished);
     m_encThread->start();
@@ -918,3 +915,6 @@ void MainWindow::loadProjectMeta()
     QString ver = currentVersion();
     if (!ver.isEmpty()) m_edVersion->setText(ver);
 }
+
+
+
